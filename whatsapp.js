@@ -1,3 +1,4 @@
+
 import makeWASocket, {
   Browsers,
   DisconnectReason,
@@ -29,13 +30,9 @@ export function createWhatsAppManager({
 }) {
   const sockets = new Map()
   const startLocks = new Map()
-
   const qrCache = new Map()
   const qrWaiters = new Map()
-
   const pairingCache = new Map()
-  const pairingWaiters = new Map()
-
   const settingsCache = new Map()
   const reconnectTimers = new Map()
 
@@ -117,9 +114,7 @@ export function createWhatsAppManager({
       { sessionId },
       {
         $set: next,
-        $setOnInsert: {
-          sessionId
-        }
+        $setOnInsert: { sessionId }
       },
       { upsert: true }
     )
@@ -132,9 +127,7 @@ export function createWhatsAppManager({
   async function sendText(sock, jid, text) {
     if (!jid) return
 
-    await sock.sendMessage(jid, {
-      text
-    })
+    await sock.sendMessage(jid, { text })
   }
 
   const handleIncoming = createMessageHandler({
@@ -148,17 +141,13 @@ export function createWhatsAppManager({
   function clearReconnectTimer(sessionId) {
     const timer = reconnectTimers.get(sessionId)
 
-    if (timer) {
-      clearTimeout(timer)
-    }
+    if (timer) clearTimeout(timer)
 
     reconnectTimers.delete(sessionId)
   }
 
   function resolveQrWaiters(sessionId, value) {
-    const waiters = qrWaiters.get(sessionId)
-
-    if (!waiters) return
+    const waiters = qrWaiters.get(sessionId) || []
 
     qrWaiters.delete(sessionId)
 
@@ -169,9 +158,7 @@ export function createWhatsAppManager({
   }
 
   function rejectQrWaiters(sessionId, error) {
-    const waiters = qrWaiters.get(sessionId)
-
-    if (!waiters) return
+    const waiters = qrWaiters.get(sessionId) || []
 
     qrWaiters.delete(sessionId)
 
@@ -181,7 +168,7 @@ export function createWhatsAppManager({
     }
   }
 
-  function waitForQr(sessionId, timeout = 20000) {
+  function waitForQr(sessionId, timeout = 25000) {
     const cached = qrCache.get(sessionId)
 
     if (cached && cached.expiresAt > Date.now()) {
@@ -189,10 +176,15 @@ export function createWhatsAppManager({
     }
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const list = qrWaiters.get(sessionId) || []
+      const waiter = {
+        resolve,
+        reject,
+        timer: null
+      }
 
-        const remaining = list.filter(item => item.resolve !== resolve)
+      waiter.timer = setTimeout(() => {
+        const list = qrWaiters.get(sessionId) || []
+        const remaining = list.filter(item => item !== waiter)
 
         if (remaining.length) {
           qrWaiters.set(sessionId, remaining)
@@ -200,59 +192,30 @@ export function createWhatsAppManager({
           qrWaiters.delete(sessionId)
         }
 
-        reject(
-          new Error(
-            'Timed out waiting for WhatsApp QR. Please press Refresh QR.'
-          )
-        )
+        reject(new Error(
+          'WhatsApp did not generate a QR code in time. Please refresh and try again.'
+        ))
       }, timeout)
 
       const list = qrWaiters.get(sessionId) || []
 
-      list.push({
-        resolve,
-        reject,
-        timer
-      })
-
+      list.push(waiter)
       qrWaiters.set(sessionId, list)
     })
   }
 
-  function resolvePairingWaiters(sessionId, value) {
-    const waiters = pairingWaiters.get(sessionId)
-
-    if (!waiters) return
-
-    pairingWaiters.delete(sessionId)
-
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timer)
-      waiter.resolve(value)
-    }
-  }
-
-  function rejectPairingWaiters(sessionId, error) {
-    const waiters = pairingWaiters.get(sessionId)
-
-    if (!waiters) return
-
-    pairingWaiters.delete(sessionId)
-
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timer)
-      waiter.reject(error)
-    }
+  function clearPairing(sessionId) {
+    pairingCache.delete(sessionId)
   }
 
   async function start(sessionId, options = {}) {
     if (shuttingDown) {
-      throw new Error('The WhatsApp service is shutting down.')
+      throw new Error('WhatsApp service is shutting down.')
     }
 
     const existing = sockets.get(sessionId)
 
-    if (existing) {
+    if (existing && !existing.closed) {
       if (options.phone && !existing.phone) {
         existing.phone = options.phone
       }
@@ -275,10 +238,7 @@ export function createWhatsAppManager({
     const startPromise = (async () => {
       await getSettings(sessionId)
 
-      const {
-        state,
-        saveCreds
-      } = await useMongoAuthState({
+      const { state, saveCreds } = await useMongoAuthState({
         sessions,
         sessionKeys,
         sessionId,
@@ -289,14 +249,10 @@ export function createWhatsAppManager({
 
       try {
         const latest = await fetchLatestBaileysVersion()
-
         version = latest.version
       } catch (error) {
         logger.warn(
-          {
-            err: error,
-            sessionId
-          },
+          { err: error, sessionId },
           'Could not fetch latest WhatsApp version; using fallback'
         )
 
@@ -306,23 +262,14 @@ export function createWhatsAppManager({
       const sock = makeWASocket({
         version,
         auth: state,
-
         browser: Browsers.ubuntu('Chrome'),
-
         printQRInTerminal: false,
-
         syncFullHistory: false,
-
         markOnlineOnConnect: false,
-
         generateHighQualityLinkPreview: false,
-
         connectTimeoutMs: 60000,
-
         defaultQueryTimeoutMs: 60000,
-
         keepAliveIntervalMs: 25000,
-
         logger: logger.child({
           sessionId,
           component: 'baileys'
@@ -335,11 +282,11 @@ export function createWhatsAppManager({
         phone: options.phone || null,
         connectedAt: null,
         pairingPromise: null,
-        closed: false
+        closed: false,
+        registered: state.creds.registered === true
       }
 
       sockets.set(sessionId, item)
-
       clearReconnectTimer(sessionId)
 
       await sessions.updateOne(
@@ -350,51 +297,32 @@ export function createWhatsAppManager({
             status: 'connecting',
             updatedAt: new Date()
           },
-
           $setOnInsert: {
             createdAt: new Date()
           }
         },
-        {
-          upsert: true
-        }
+        { upsert: true }
       )
 
       sock.ev.on('creds.update', () => {
+        item.registered = state.creds.registered === true
+
         saveCreds().catch(error => {
-          log(
-            'error',
-            'WhatsApp credentials save failed',
-            {
-              sessionId,
-              error: error?.message || String(error)
-            }
-          )
+          log('error', 'WhatsApp credentials save failed', {
+            sessionId,
+            error: error?.message || String(error)
+          })
         })
       })
 
       sock.ev.on('connection.update', update => {
         ;(async () => {
-          if (
-            sockets.get(sessionId) !== item ||
-            item.closed
-          ) {
+          if (sockets.get(sessionId) !== item || item.closed) {
             return
           }
 
-          const {
-            connection,
-            lastDisconnect,
-            qr
-          } = update
+          const { connection, lastDisconnect, qr } = update
 
-          /*
-           * THIS IS THE IMPORTANT QR FIX.
-           *
-           * Baileys emits the actual QR string asynchronously.
-           * We save it immediately and resolve every request
-           * waiting for the QR.
-           */
           if (qr) {
             const qrData = {
               qr,
@@ -415,13 +343,9 @@ export function createWhatsAppManager({
 
             resolveQrWaiters(sessionId, qrData)
 
-            await log(
-              'info',
-              'WhatsApp QR generated',
-              {
-                sessionId
-              }
-            )
+            await log('info', 'WhatsApp QR generated', {
+              sessionId
+            })
           }
 
           if (connection === 'connecting') {
@@ -437,8 +361,8 @@ export function createWhatsAppManager({
           }
 
           if (connection === 'open') {
-            item.connectedAt =
-              item.connectedAt || Date.now()
+            item.connectedAt = item.connectedAt || Date.now()
+            item.registered = true
 
             item.phone =
               sock.user?.id?.split(':')[0] ||
@@ -446,8 +370,7 @@ export function createWhatsAppManager({
               null
 
             qrCache.delete(sessionId)
-
-            pairingCache.delete(sessionId)
+            clearPairing(sessionId)
 
             await sessions.updateOne(
               { sessionId },
@@ -455,14 +378,12 @@ export function createWhatsAppManager({
                 $set: {
                   status: 'open',
                   phone: item.phone,
-                  connectedAt:
-                    new Date(item.connectedAt),
+                  hasCreds: true,
+                  connectedAt: new Date(item.connectedAt),
                   updatedAt: new Date()
                 }
               },
-              {
-                upsert: true
-              }
+              { upsert: true }
             )
 
             await users.updateOne(
@@ -474,42 +395,21 @@ export function createWhatsAppManager({
                   role: 'user',
                   updatedAt: new Date()
                 },
-
                 $setOnInsert: {
                   createdAt: new Date()
                 }
               },
-              {
-                upsert: true
-              }
+              { upsert: true }
             )
 
-            resolveQrWaiters(
-              sessionId,
-              {
-                connected: true
-              }
+            resolveQrWaiters(sessionId, { connected: true })
+
+            const cfg = await getSettings(sessionId)
+
+            const existingSession = await sessions.findOne(
+              { sessionId },
+              { projection: { welcomeSentAt: 1 } }
             )
-
-            resolvePairingWaiters(
-              sessionId,
-              {
-                connected: true
-              }
-            )
-
-            const cfg =
-              await getSettings(sessionId)
-
-            const existingSession =
-              await sessions.findOne(
-                { sessionId },
-                {
-                  projection: {
-                    welcomeSentAt: 1
-                  }
-                }
-              )
 
             if (
               cfg.welcome &&
@@ -527,33 +427,22 @@ export function createWhatsAppManager({
                   { sessionId },
                   {
                     $set: {
-                      welcomeSentAt:
-                        new Date()
+                      welcomeSentAt: new Date()
                     }
                   }
                 )
               } catch (error) {
-                await log(
-                  'warn',
-                  'Welcome message failed',
-                  {
-                    sessionId,
-                    error:
-                      error?.message ||
-                      String(error)
-                  }
-                )
+                await log('warn', 'Welcome message failed', {
+                  sessionId,
+                  error: error?.message || String(error)
+                })
               }
             }
 
-            await log(
-              'info',
-              'WhatsApp connection opened',
-              {
-                sessionId,
-                phone: item.phone
-              }
-            )
+            await log('info', 'WhatsApp connection opened', {
+              sessionId,
+              phone: item.phone
+            })
           }
 
           if (connection === 'close') {
@@ -563,406 +452,238 @@ export function createWhatsAppManager({
               lastDisconnect?.error?.output?.statusCode
 
             const loggedOut =
-              statusCode ===
-              DisconnectReason.loggedOut
+              statusCode === DisconnectReason.loggedOut
 
             const replaced =
-              statusCode ===
-              DisconnectReason.connectionReplaced
+              statusCode === DisconnectReason.connectionReplaced
+
+            const wasRegistered =
+              item.registered ||
+              state.creds.registered === true
 
             await sessions.updateOne(
               { sessionId },
               {
                 $set: {
-                  status:
-                    loggedOut
-                      ? 'logged_out'
-                      : 'closed',
-
-                  lastDisconnectCode:
-                    statusCode ?? null,
-
-                  updatedAt:
-                    new Date()
+                  status: loggedOut ? 'logged_out' : 'closed',
+                  lastDisconnectCode: statusCode ?? null,
+                  updatedAt: new Date()
                 }
               }
             )
 
-            await log(
-              'warn',
-              'WhatsApp connection closed',
-              {
-                sessionId,
-                statusCode:
-                  statusCode ?? null,
-                loggedOut,
-                connectionReplaced:
-                  replaced,
-                error:
-                  lastDisconnect?.error?.message ||
-                  null
-              }
-            )
+            await log('warn', 'WhatsApp connection closed', {
+              sessionId,
+              statusCode: statusCode ?? null,
+              loggedOut,
+              registered: wasRegistered,
+              connectionReplaced: replaced,
+              error: lastDisconnect?.error?.message || null
+            })
 
             rejectQrWaiters(
               sessionId,
               new Error(
-                'WhatsApp connection closed before a QR was generated.'
+                'WhatsApp disconnected before a QR code was received. Refresh QR and try again.'
               )
             )
 
-            rejectPairingWaiters(
-              sessionId,
-              new Error(
-                'WhatsApp connection closed before pairing could complete.'
-              )
-            )
-
-            if (
-              sockets.get(sessionId) === item
-            ) {
+            if (sockets.get(sessionId) === item) {
               sockets.delete(sessionId)
             }
 
             qrCache.delete(sessionId)
+            clearPairing(sessionId)
 
-            pairingCache.delete(sessionId)
-
+            // Never create an automatic reconnect loop for an
+            // unlinked visitor session.
             if (
               !shuttingDown &&
+              wasRegistered &&
               !loggedOut &&
               !replaced
             ) {
-              clearReconnectTimer(
-                sessionId
-              )
+              clearReconnectTimer(sessionId)
 
-              const timer =
-                setTimeout(() => {
-                  reconnectTimers.delete(
-                    sessionId
-                  )
+              const timer = setTimeout(() => {
+                reconnectTimers.delete(sessionId)
 
-                  if (
-                    shuttingDown ||
-                    sockets.has(sessionId)
-                  ) {
-                    return
-                  }
+                if (shuttingDown || sockets.has(sessionId)) {
+                  return
+                }
 
-                  start(sessionId)
-                    .catch(error => {
-                      log(
-                        'error',
-                        'WhatsApp reconnect failed',
-                        {
-                          sessionId,
-                          error:
-                            error?.message ||
-                            String(error)
-                        }
-                      )
-                    })
-                }, 3000)
+                start(sessionId).catch(error => {
+                  log('error', 'WhatsApp reconnect failed', {
+                    sessionId,
+                    error: error?.message || String(error)
+                  })
+                })
+              }, 4000)
 
-              reconnectTimers.set(
-                sessionId,
-                timer
-              )
+              reconnectTimers.set(sessionId, timer)
             }
           }
         })().catch(error => {
-          log(
-            'error',
-            'WhatsApp connection event handler failed',
-            {
-              sessionId,
-              error:
-                error?.message ||
-                String(error),
-
-              stack:
-                error?.stack
-            }
-          )
+          log('error', 'WhatsApp connection event handler failed', {
+            sessionId,
+            error: error?.message || String(error),
+            stack: error?.stack
+          })
         })
       })
 
       sock.ev.on('messages.upsert', event => {
         ;(async () => {
-          if (
-            sockets.get(sessionId) !== item ||
-            item.closed
-          ) {
+          if (sockets.get(sessionId) !== item || item.closed) {
             return
           }
 
-          const messages =
-            Array.isArray(event?.messages)
-              ? event.messages
-              : []
+          const messages = Array.isArray(event?.messages)
+            ? event.messages
+            : []
 
-          if (!messages.length) {
-            return
-          }
+          if (!messages.length) return
 
-          await log(
-            'info',
-            'MESSAGE EVENT RECEIVED',
-            {
-              sessionId,
-              eventType:
-                event?.type ||
-                'unknown',
+          await log('info', 'MESSAGE EVENT RECEIVED', {
+            sessionId,
+            eventType: event?.type || 'unknown',
+            messageCount: messages.length
+          })
 
-              messageCount:
-                messages.length
-            }
-          )
-
-          if (event?.type !== 'notify') {
-            return
-          }
+          if (event?.type !== 'notify') return
 
           await sessions.updateOne(
             { sessionId },
             {
               $set: {
-                lastMessageAt:
-                  new Date()
+                lastMessageAt: new Date()
               }
             }
           ).catch(() => {})
 
           for (const message of messages) {
             try {
-              const jid =
-                message?.key?.remoteJid
+              const jid = message?.key?.remoteJid
 
-              if (
-                jid === 'status@broadcast'
-              ) {
-                const config =
-                  await getSettings(
-                    sessionId
-                  )
-
-                const key =
-                  message.key
+              if (jid === 'status@broadcast') {
+                const config = await getSettings(sessionId)
+                const key = message.key
 
                 try {
-                  if (
-                    config.autoViewStatus &&
-                    key
-                  ) {
-                    await sock.readMessages([
-                      key
-                    ])
+                  if (config.autoViewStatus && key) {
+                    await sock.readMessages([key])
                   }
 
-                  if (
-                    config.statusReact &&
-                    key
-                  ) {
+                  if (config.statusReact && key) {
                     await sock.sendMessage(
                       jid,
                       {
                         react: {
-                          text:
-                            config.statusReactEmoji ||
-                            '❤️',
-
+                          text: config.statusReactEmoji || '❤️',
                           key
                         }
                       },
                       {
-                        statusJidList:
-                          [
-                            key.participant
-                          ].filter(Boolean)
+                        statusJidList: [key.participant].filter(Boolean)
                       }
                     )
                   }
                 } catch (error) {
-                  await log(
-                    'warn',
-                    'Status automation failed',
-                    {
-                      sessionId,
-                      error:
-                        error?.message ||
-                        String(error)
-                    }
-                  )
+                  await log('warn', 'Status automation failed', {
+                    sessionId,
+                    error: error?.message || String(error)
+                  })
                 }
 
                 continue
               }
 
-              await handleIncoming(
-                sessionId,
-                sock,
-                message
-              )
+              await handleIncoming(sessionId, sock, message)
             } catch (error) {
-              await log(
-                'error',
-                'Message handler failed',
-                {
-                  sessionId,
-                  messageId:
-                    message?.key?.id ||
-                    null,
-
-                  error:
-                    error?.message ||
-                    String(error),
-
-                  stack:
-                    error?.stack
-                }
-              )
+              await log('error', 'Message handler failed', {
+                sessionId,
+                messageId: message?.key?.id || null,
+                error: error?.message || String(error),
+                stack: error?.stack
+              })
             }
           }
         })().catch(error => {
-          log(
-            'error',
-            'WhatsApp messages event failed',
-            {
-              sessionId,
-              error:
-                error?.message ||
-                String(error)
-            }
-          )
+          log('error', 'WhatsApp messages event failed', {
+            sessionId,
+            error: error?.message || String(error)
+          })
         })
       })
 
       return item
     })()
 
-    startLocks.set(
-      sessionId,
-      startPromise
-    )
+    startLocks.set(sessionId, startPromise)
 
     try {
       return await startPromise
     } finally {
-      if (
-        startLocks.get(sessionId) ===
-        startPromise
-      ) {
-        startLocks.delete(
-          sessionId
-        )
+      if (startLocks.get(sessionId) === startPromise) {
+        startLocks.delete(sessionId)
       }
     }
   }
 
   async function getQr(sessionId) {
-    let live = sockets.get(sessionId)
+    let item = sockets.get(sessionId)
 
-    /*
-     * Existing authenticated sessions do not receive a QR.
-     */
-    if (live?.sock?.user) {
+    if (item?.sock?.user) {
       return {
         ok: true,
         state: 'open',
         qr: null,
         expiresIn: 0,
-        message:
-          'This WhatsApp session is already connected.'
+        message: 'This WhatsApp session is already connected.'
       }
     }
 
-    let cached =
-      qrCache.get(sessionId)
+    let cached = qrCache.get(sessionId)
 
-    if (
-      cached &&
-      cached.expiresAt >
-        Date.now()
-    ) {
+    if (cached && cached.expiresAt > Date.now()) {
       return {
         ok: true,
         state: 'waiting',
         qr: cached.qr,
-        expiresIn:
-          Math.ceil(
-            (cached.expiresAt -
-              Date.now()) /
-              1000
-          )
+        expiresIn: Math.ceil((cached.expiresAt - Date.now()) / 1000)
       }
     }
 
-    if (cached) {
-      qrCache.delete(
-        sessionId
-      )
+    if (cached) qrCache.delete(sessionId)
+
+    if (!item || item.closed) {
+      item = await start(sessionId)
     }
 
-    if (!live) {
-      live = await start(
-        sessionId
-      )
-    }
+    cached = qrCache.get(sessionId)
 
-    /*
-     * Check again because the QR may have
-     * arrived while start() was running.
-     */
-    cached =
-      qrCache.get(sessionId)
-
-    if (
-      cached &&
-      cached.expiresAt >
-        Date.now()
-    ) {
+    if (cached && cached.expiresAt > Date.now()) {
       return {
         ok: true,
         state: 'waiting',
         qr: cached.qr,
-        expiresIn:
-          Math.ceil(
-            (cached.expiresAt -
-              Date.now()) /
-              1000
-          )
+        expiresIn: Math.ceil((cached.expiresAt - Date.now()) / 1000)
       }
     }
 
-    if (
-      live?.sock?.user
-    ) {
+    if (item?.sock?.user) {
       return {
         ok: true,
         state: 'open',
         qr: null,
-        expiresIn: 0,
-        message:
-          'This WhatsApp session is already connected.'
+        expiresIn: 0
       }
     }
 
-    /*
-     * IMPORTANT:
-     * Wait for Baileys to actually emit
-     * the QR instead of returning null.
-     */
     try {
-      const result =
-        await waitForQr(
-          sessionId,
-          20000
-        )
+      const result = await waitForQr(sessionId, 25000)
 
-      if (
-        result?.connected
-      ) {
+      if (result.connected) {
         return {
           ok: true,
           state: 'open',
@@ -975,26 +696,15 @@ export function createWhatsAppManager({
         ok: true,
         state: 'waiting',
         qr: result.qr,
-        expiresIn:
-          Math.max(
-            1,
-            Math.ceil(
-              (result.expiresAt -
-                Date.now()) /
-                1000
-            )
-          )
+        expiresIn: Math.max(
+          1,
+          Math.ceil((result.expiresAt - Date.now()) / 1000)
+        )
       }
     } catch (error) {
-      const info =
-        await sessionInfo(
-          sessionId
-        )
+      const info = await sessionInfo(sessionId)
 
-      if (
-        info.status ===
-        'open'
-      ) {
+      if (info.status === 'open') {
         return {
           ok: true,
           state: 'open',
@@ -1005,429 +715,257 @@ export function createWhatsAppManager({
 
       return {
         ok: false,
-        state:
-          info.status ||
-          'connecting',
+        state: info.status || 'connecting',
         qr: null,
         expiresIn: 0,
-        message:
-          error?.message ||
-          'QR generation timed out. Press Refresh QR to try again.'
+        message: error?.message || 'QR generation failed. Please refresh QR.'
       }
     }
   }
 
-  async function requestPairingCode(
-    sessionId,
-    phone
-  ) {
-    const normalizedPhone =
-      String(phone || '')
-        .replace(/\D/g, '')
+  async function waitForSocketOpen(item, timeout = 15000) {
+    const startedAt = Date.now()
 
-    if (
-      normalizedPhone.length < 8 ||
-      normalizedPhone.length > 15
-    ) {
+    while (Date.now() - startedAt < timeout) {
+      if (item.closed || sockets.get(item.sessionId) !== item) {
+        throw new Error('WhatsApp connection closed. Please try again.')
+      }
+
+      if (item.sock?.user) {
+        throw new Error('This WhatsApp session is already connected.')
+      }
+
+      // ws readyState 1 means the WebSocket is open.
+      if (item.sock?.ws?.readyState === 1) {
+        return
+      }
+
+      await delay(250)
+    }
+
+    throw new Error(
+      'WhatsApp WebSocket did not become ready. Please refresh and try again.'
+    )
+  }
+
+  async function requestPairingCode(sessionId, phone) {
+    const normalizedPhone = String(phone || '').replace(/\D/g, '')
+
+    if (normalizedPhone.length < 8 || normalizedPhone.length > 15) {
       throw new Error(
         'Enter a valid international phone number including country code.'
       )
     }
 
-    let item =
-      sockets.get(sessionId)
+    let item = sockets.get(sessionId)
 
-    if (
-      item?.sock?.user
-    ) {
+    if (item?.sock?.user) {
       return {
         ok: false,
-        message:
-          'This WhatsApp session is already connected. Use a new session to link another number.'
+        message: 'This WhatsApp session is already connected. Use a new session to link another number.'
       }
     }
 
-    if (!item) {
-      item =
-        await start(
-          sessionId,
-          {
-            phone:
-              normalizedPhone
-          }
-        )
+    if (!item || item.closed) {
+      item = await start(sessionId, {
+        phone: normalizedPhone
+      })
     }
 
-    if (
-      item.sock?.user
-    ) {
-      return {
-        ok: false,
-        message:
-          'This WhatsApp session is already connected. Use a new session to link another number.'
-      }
-    }
+    item.phone = normalizedPhone
 
-    item.phone =
-      normalizedPhone
+    const cached = pairingCache.get(sessionId)
 
-    const cached =
-      pairingCache.get(
-        sessionId
-      )
-
-    if (
-      cached &&
-      cached.expiresAt >
-        Date.now()
-    ) {
+    if (cached && cached.expiresAt > Date.now()) {
       return {
         ok: true,
-        code:
-          cached.code,
-        message:
-          'Pairing code ready',
-        expiresIn:
-          Math.ceil(
-            (cached.expiresAt -
-              Date.now()) /
-              1000
-          )
+        code: cached.code,
+        message: 'Pairing code ready',
+        expiresIn: Math.ceil((cached.expiresAt - Date.now()) / 1000)
       }
     }
 
-    if (
-      !item.pairingPromise
-    ) {
-      item.pairingPromise =
-        (async () => {
-          /*
-           * Give Baileys time to establish
-           * its WebSocket before asking
-           * for the pairing code.
-           */
-          await delay(2000)
+    if (!item.pairingPromise) {
+      item.pairingPromise = (async () => {
+        await waitForSocketOpen(item)
 
-          if (
-            sockets.get(
-              sessionId
-            ) !== item ||
-            item.closed
-          ) {
-            throw new Error(
-              'WhatsApp connection closed before the pairing code could be generated. Please try again.'
-            )
-          }
+        if (item.sock?.user) {
+          throw new Error('This WhatsApp session is already connected.')
+        }
 
-          if (
-            item.sock?.user
-          ) {
-            throw new Error(
-              'This WhatsApp session is already connected. Use a new session to link another number.'
-            )
-          }
+        const code = await item.sock.requestPairingCode(normalizedPhone)
 
-          const code =
-            await item.sock.requestPairingCode(
-              normalizedPhone
-            )
+        const result = {
+          code,
+          expiresAt: Date.now() + 60000
+        }
 
-          pairingCache.set(
-            sessionId,
-            {
-              code,
-              expiresAt:
-                Date.now() +
-                60000
+        pairingCache.set(sessionId, result)
+
+        await sessions.updateOne(
+          { sessionId },
+          {
+            $set: {
+              status: 'pairing',
+              updatedAt: new Date()
             }
-          )
-
-          await sessions.updateOne(
-            { sessionId },
-            {
-              $set: {
-                status:
-                  'pairing',
-                updatedAt:
-                  new Date()
-              }
-            }
-          )
-
-          await log(
-            'info',
-            'WhatsApp pairing code generated',
-            {
-              sessionId
-            }
-          )
-
-          return code
-        })().finally(
-          () => {
-            item.pairingPromise =
-              null
           }
         )
+
+        await log('info', 'WhatsApp pairing code generated', {
+          sessionId
+        })
+
+        return code
+      })().finally(() => {
+        item.pairingPromise = null
+      })
     }
 
-    const code =
-      await item.pairingPromise
-
-    const result =
-      pairingCache.get(
-        sessionId
-      )
+    const code = await item.pairingPromise
+    const result = pairingCache.get(sessionId)
 
     return {
       ok: true,
       code,
-      message:
-        'Pairing code ready',
-      expiresIn:
-        result
-          ? Math.ceil(
-              (result.expiresAt -
-                Date.now()) /
-                1000
-            )
-          : 60
+      message: 'Pairing code ready',
+      expiresIn: result
+        ? Math.ceil((result.expiresAt - Date.now()) / 1000)
+        : 60
     }
   }
 
-  async function sessionInfo(
-    sessionId
-  ) {
-    const doc =
-      await sessions.findOne(
-        { sessionId },
-        {
-          projection: {
-            _id: 0,
-            creds: 0
-          }
+  async function sessionInfo(sessionId) {
+    const doc = await sessions.findOne(
+      { sessionId },
+      {
+        projection: {
+          _id: 0,
+          creds: 0
         }
-      )
+      }
+    )
 
     return {
       ok: true,
       ...doc,
-      live:
-        sockets.has(
-          sessionId
-        )
+      live: sockets.has(sessionId)
     }
   }
 
   async function listSessions() {
-    return sessions
-      .find(
-        {},
-        {
-          projection: {
-            _id: 0,
-            creds: 0
-          }
+    return sessions.find(
+      {},
+      {
+        projection: {
+          _id: 0,
+          creds: 0
         }
-      )
-      .sort({
-        updatedAt:
-          -1
-      })
+      }
+    )
+      .sort({ updatedAt: -1 })
       .limit(100)
       .toArray()
   }
 
   async function restoreSessions() {
-    await log(
-      'info',
-      'Saved WhatsApp session restoration started'
-    )
+    await log('info', 'Saved WhatsApp session restoration started')
 
-    const savedSessions =
-      await sessions
-        .find({
-          hasCreds: true,
-          creds: {
-            $exists: true,
-            $ne: null
-          },
-
-          status: {
-            $ne:
-              'logged_out'
-          }
-        })
-        .project({
-          sessionId: 1
-        })
-        .toArray()
+    const savedSessions = await sessions.find({
+      hasCreds: true,
+      creds: {
+        $exists: true,
+        $ne: null
+      },
+      status: {
+        $ne: 'logged_out'
+      }
+    })
+      .project({ sessionId: 1 })
+      .toArray()
 
     let started = 0
     let failed = 0
 
-    for (
-      const saved of
-      savedSessions
-    ) {
-      if (
-        !saved.sessionId
-      ) {
-        continue
-      }
+    for (const saved of savedSessions) {
+      if (!saved.sessionId) continue
 
       try {
-        await start(
-          saved.sessionId
-        )
-
+        await start(saved.sessionId)
         started++
 
-        await log(
-          'info',
-          'Saved WhatsApp session socket started',
-          {
-            sessionId:
-              saved.sessionId
-          }
-        )
+        await log('info', 'Saved WhatsApp session socket started', {
+          sessionId: saved.sessionId
+        })
       } catch (error) {
         failed++
 
-        await log(
-          'error',
-          'Saved WhatsApp session restoration failed',
-          {
-            sessionId:
-              saved.sessionId,
-
-            error:
-              error?.message ||
-              String(error)
-          }
-        )
+        await log('error', 'Saved WhatsApp session restoration failed', {
+          sessionId: saved.sessionId,
+          error: error?.message || String(error)
+        })
       }
     }
 
     const result = {
-      found:
-        savedSessions.length,
+      found: savedSessions.length,
       started,
       failed
     }
 
-    await log(
-      'info',
-      'Saved WhatsApp session restoration finished',
-      result
-    )
+    await log('info', 'Saved WhatsApp session restoration finished', result)
 
     return result
   }
 
   async function status() {
-    const totalAccounts =
-      await sessions.countDocuments({
-        status: {
-          $in: [
-            'open',
-            'connecting',
-            'qr',
-            'pairing'
-          ]
-        }
-      })
+    const totalAccounts = await sessions.countDocuments({
+      status: {
+        $in: ['open', 'connecting', 'qr', 'pairing']
+      }
+    })
 
-    const admins =
-      await users.countDocuments({
-        role: 'admin'
-      })
+    const admins = await users.countDocuments({
+      role: 'admin'
+    })
 
     return {
       ok: true,
-      status:
-        sockets.size
-          ? 'Online'
-          : 'Idle',
-
+      status: sockets.size ? 'Online' : 'Idle',
       totalAccounts,
-
-      normalUsers:
-        await users.countDocuments({
-          role: {
-            $ne:
-              'admin'
-          }
-        }),
-
+      normalUsers: await users.countDocuments({
+        role: { $ne: 'admin' }
+      }),
       admins,
-
-      database:
-        'Connected',
-
-      whatsapp:
-        sockets.size
-          ? 'Active'
-          : 'Waiting',
-
-      uptime:
-        process.uptime()
+      database: 'Connected',
+      whatsapp: sockets.size ? 'Active' : 'Waiting',
+      uptime: process.uptime()
     }
   }
 
   async function stopAll() {
     shuttingDown = true
 
-    for (
-      const timer of
-      reconnectTimers.values()
-    ) {
-      clearTimeout(
-        timer
-      )
+    for (const timer of reconnectTimers.values()) {
+      clearTimeout(timer)
     }
 
     reconnectTimers.clear()
 
-    for (
-      const [sessionId, item]
-      of sockets
-    ) {
-      item.closed =
-        true
+    for (const [sessionId, item] of sockets) {
+      item.closed = true
 
       try {
-        item.sock.end(
-          undefined
-        )
+        item.sock.end(undefined)
       } catch {}
 
-      sockets.delete(
-        sessionId
-      )
+      sockets.delete(sessionId)
     }
 
-    for (
-      const sessionId
-      of qrWaiters.keys()
-    ) {
+    for (const sessionId of qrWaiters.keys()) {
       rejectQrWaiters(
         sessionId,
-        new Error(
-          'WhatsApp service is shutting down.'
-        )
-      )
-    }
-
-    for (
-      const sessionId
-      of pairingWaiters.keys()
-    ) {
-      rejectPairingWaiters(
-        sessionId,
-        new Error(
-          'WhatsApp service is shutting down.'
-        )
+        new Error('WhatsApp service is shutting down.')
       )
     }
 
