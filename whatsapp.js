@@ -19,32 +19,6 @@ const DEFAULT_SETTINGS = {
   statusReactEmoji: '❤️'
 }
 
-function getMessageText(message) {
-  let msg = message
-
-  while (
-    msg?.ephemeralMessage?.message ||
-    msg?.viewOnceMessage?.message ||
-    msg?.viewOnceMessageV2?.message ||
-    msg?.documentWithCaptionMessage?.message
-  ) {
-    msg =
-      msg.ephemeralMessage?.message ||
-      msg.viewOnceMessage?.message ||
-      msg.viewOnceMessageV2?.message ||
-      msg.documentWithCaptionMessage?.message
-  }
-
-  const m = msg?.conversation
-    ? { conversation: msg.conversation }
-    : msg?.extendedTextMessage ||
-      msg?.imageMessage ||
-      msg?.videoMessage ||
-      msg?.documentMessage
-
-  return m?.conversation || m?.text || m?.caption || ''
-}
-
 export function createWhatsAppManager({
   sessions,
   sessionKeys,
@@ -149,183 +123,13 @@ export function createWhatsAppManager({
     await sock.sendMessage(jid, { text })
   }
 
-  async function handleIncoming(sessionId, sock, message) {
-    
-const key = message?.key
-const jid = key?.remoteJid
-
-if (!jid) return
-
-// Allow commands in your own WhatsApp self-chat.
-if (key.fromMe) {
-  const ownUserJid = sock.user?.id
-    ? `${sock.user.id.split(':')[0]}@s.whatsapp.net`
-    : null
-
-  const ownLid = sock.user?.lid || null
-
-  const isOwnChat =
-    jid === ownUserJid ||
-    jid === ownLid
-
-  if (!isOwnChat) return
-}
-
-    const current = await getSettings(sessionId)
-
-    if (jid === 'status@broadcast') {
-      try {
-        if (current.autoViewStatus && key) {
-          await sock.readMessages([key])
-        }
-
-        if (current.statusReact && key) {
-          await sock.sendMessage(
-            jid,
-            {
-              react: {
-                text: current.statusReactEmoji || '❤️',
-                key
-              }
-            },
-            {
-              statusJidList: [key.participant].filter(Boolean)
-            }
-          )
-        }
-      } catch (error) {
-        await log('warn', 'Status automation failed', {
-          sessionId,
-          error: error.message
-        })
-      }
-
-      return
-    }
-
-    const text = getMessageText(message.message).trim()
-
-    if (!text.startsWith('.')) return
-
-    const [rawCommand, ...args] = text.slice(1).trim().split(/\s+/)
-
-    const command = String(rawCommand || '').toLowerCase()
-    const argument = String(args[0] || '').toLowerCase()
-
-    const reply = value => sendText(sock, jid, value)
-
-    try {
-      if (
-        command === 'autoviewstatus' ||
-        command === 'statusreact'
-      ) {
-        if (!['on', 'off'].includes(argument)) {
-          const field =
-            command === 'autoviewstatus'
-              ? 'autoViewStatus'
-              : 'statusReact'
-
-          const config = await getSettings(sessionId)
-
-          return reply(
-            `Usage: .${command} on/off\n` +
-            `Current: ${config[field] ? 'ON' : 'OFF'}`
-          )
-        }
-
-        const field =
-          command === 'autoviewstatus'
-            ? 'autoViewStatus'
-            : 'statusReact'
-
-        await updateSettings(sessionId, {
-          [field]: argument === 'on'
-        })
-
-        return reply(
-          `✅ ${
-            command === 'autoviewstatus'
-              ? 'Auto view status'
-              : 'Status reaction'
-          } is now ${argument.toUpperCase()}.`
-        )
-      }
-
-      switch (command) {
-        case 'menu':
-        case 'help':
-          return reply(
-            '╭━━━〔 SCANTY MD BOT 〕━━━╮\n' +
-            '┃ .menu — Show commands\n' +
-            '┃ .help — Show commands\n' +
-            '┃ .ping — Check response speed\n' +
-            '┃ .alive — Check bot connection\n' +
-            '┃ .status — Show bot status\n' +
-            '┃ .uptime — Show running time\n' +
-            '┃ .autoviewstatus on/off\n' +
-            '┃ .statusreact on/off\n' +
-            '╰━━━━━━━━━━━━━━━━━━━━╯'
-          )
-
-        case 'ping': {
-          const started = Date.now()
-
-          await reply(`🏓 Pong! ${Date.now() - started} ms`)
-
-          return
-        }
-
-        case 'alive':
-          return reply(
-            '✅ SCANTY MD BOT is online and connected.'
-          )
-
-        case 'status': {
-          const row = await sessions.findOne(
-            { sessionId },
-            {
-              projection: {
-                status: 1,
-                phone: 1
-              }
-            }
-          )
-
-          const cfg = await getSettings(sessionId)
-
-          return reply(
-            `🤖 SCANTY MD BOT\n` +
-            `Status: ${row?.status || 'unknown'}\n` +
-            `Auto view status: ${cfg.autoViewStatus ? 'ON' : 'OFF'}\n` +
-            `Status react: ${cfg.statusReact ? 'ON' : 'OFF'}`
-          )
-        }
-
-        case 'uptime': {
-          const total = Math.floor(process.uptime())
-
-          const h = Math.floor(total / 3600)
-          const m = Math.floor((total % 3600) / 60)
-          const s = total % 60
-
-          return reply(`⏱️ Uptime: ${h}h ${m}m ${s}s`)
-        }
-
-        default:
-          return
-      }
-    } catch (error) {
-      await log('error', 'Incoming command failed', {
-        sessionId,
-        command,
-        error: error.message
-      })
-
-      await reply(
-        '❌ Command failed. Please try again.'
-      )
-    }
-  }
+  const handleIncoming = createMessageHandler({
+    sessions,
+    getSettings,
+    updateSettings,
+    sendText,
+    log
+  })
 
   async function start(sessionId, { pairing = false } = {}) {
     if (sockets.has(sessionId)) {
@@ -627,19 +431,17 @@ if (key.fromMe) {
       })
 
       sock.ev.on('messages.upsert', async event => {
-        await log(
-          'info',
-          'MESSAGE EVENT RECEIVED',
-          {
-            eventType: event?.type,
-            messageCount: event?.messages?.length || 0
-          }
-        )
+        const messages = Array.isArray(event?.messages)
+          ? event.messages
+          : []
 
-        if (
-          event?.type !== 'notify' ||
-          !Array.isArray(event.messages)
-        ) {
+        await log('info', 'MESSAGE EVENT RECEIVED', {
+          sessionId,
+          eventType: event?.type || 'unknown',
+          messageCount: messages.length
+        })
+
+        if (event?.type !== 'notify' || messages.length === 0) {
           return
         }
 
@@ -652,21 +454,52 @@ if (key.fromMe) {
           }
         ).catch(() => {})
 
-        for (const message of event.messages) {
-          await handleIncoming(
-            sessionId,
-            sock,
-            message
-          ).catch(error =>
-            log(
-              'error',
-              'Message handler failed',
-              {
-                sessionId,
-                error: error.message
+        for (const message of messages) {
+          try {
+            const jid = message?.key?.remoteJid
+
+            if (jid === 'status@broadcast') {
+              const config = await getSettings(sessionId)
+              const key = message.key
+
+              try {
+                if (config.autoViewStatus && key) {
+                  await sock.readMessages([key])
+                }
+
+                if (config.statusReact && key) {
+                  await sock.sendMessage(
+                    jid,
+                    {
+                      react: {
+                        text: config.statusReactEmoji || '❤️',
+                        key
+                      }
+                    },
+                    {
+                      statusJidList: [key.participant].filter(Boolean)
+                    }
+                  )
+                }
+              } catch (error) {
+                await log('warn', 'Status automation failed', {
+                  sessionId,
+                  error: error?.message || String(error)
+                })
               }
-            )
-          )
+
+              continue
+            }
+
+            await handleIncoming(sessionId, sock, message)
+          } catch (error) {
+            await log('error', 'Message handler failed', {
+              sessionId,
+              messageId: message?.key?.id || null,
+              error: error?.message || String(error),
+              stack: error?.stack
+            })
+          }
         }
       })
 
