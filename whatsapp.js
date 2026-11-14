@@ -149,10 +149,26 @@ export function createWhatsAppManager({
   }
 
   async function handleIncoming(sessionId, sock, message) {
-    const key = message?.key
-    const jid = key?.remoteJid
+    
+const key = message?.key
+const jid = key?.remoteJid
 
-    if (!jid || key.fromMe) return
+if (!jid) return
+
+// Allow commands in your own WhatsApp self-chat.
+if (key.fromMe) {
+  const ownUserJid = sock.user?.id
+    ? `${sock.user.id.split(':')[0]}@s.whatsapp.net`
+    : null
+
+  const ownLid = sock.user?.lid || null
+
+  const isOwnChat =
+    jid === ownUserJid ||
+    jid === ownLid
+
+  if (!isOwnChat) return
+}
 
     const current = await getSettings(sessionId)
 
