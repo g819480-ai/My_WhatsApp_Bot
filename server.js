@@ -1,3 +1,4 @@
+import { createAdminRouter } from './admin-routes.js'
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
@@ -79,6 +80,13 @@ app.use(compression())
 app.use(express.json({ limit: '1mb' }))
 app.use(express.urlencoded({ extended: false }))
 app.disable('x-powered-by')
+app.use('/api/admin', createAdminRouter({
+  sessions,
+  users,
+  settings,
+  logs,
+  manager
+}))
 
 app.get('/health', async (_req, res) => {
   try {
