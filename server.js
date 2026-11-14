@@ -35,11 +35,36 @@ const settings = db.collection('bot_settings')
 const logs = db.collection('bot_logs')
 
 await Promise.all([
-  sessions.createIndex({ sessionId: 1 }, { unique: true }),
-  sessionKeys.createIndex({ sessionId: 1, category: 1, keyId: 1 }, { unique: true }),
-  users.createIndex({ sessionId: 1 }, { unique: true }),
+  sessions.createIndex(
+    { sessionId: 1 },
+    {
+      unique: true,
+      name: 'sessionId_unique_string',
+      partialFilterExpression: { sessionId: { $type: 'string' } }
+    }
+  ),
+  sessionKeys.createIndex(
+    { sessionId: 1, category: 1, keyId: 1 },
+    {
+      unique: true,
+      name: 'session_keys_unique_valid',
+      partialFilterExpression: {
+        sessionId: { $type: 'string' },
+        category: { $type: 'string' },
+        keyId: { $type: 'string' }
+      }
+    }
+  ),
+  users.createIndex(
+    { sessionId: 1 },
+    {
+      unique: true,
+      name: 'users_sessionId_unique_string',
+      partialFilterExpression: { sessionId: { $type: 'string' } }
+    }
+  ),
   logs.createIndex({ createdAt: -1 })
-])
+]) 
 
 const manager = createWhatsAppManager({ sessions, sessionKeys, users, logs, logger })
 
