@@ -272,26 +272,28 @@ export function createWhatsAppManager({ sessions, sessionKeys, users, settings, 
           }
         }
       })
-await log('info', 'MESSAGE EVENT RECEIVED', {
-  eventType: event?.type,
-  messageCount: event?.messages?.length || 0
-})
       sock.ev.on('messages.upsert', async event => {
+        await log('info', 'MESSAGE EVENT RECEIVED', {
+          eventType: event?.type,
+          messageCount: event?.messages?.length || 0
+        })
+
         if (event?.type !== 'notify' || !Array.isArray(event.messages)) return
-        await sessions.updateOne({ sessionId }, { $set: { lastMessageAt: new Date() } }).catch(() => {})
+
+        await sessions.updateOne(
+          { sessionId },
+          { $set: { lastMessageAt: new Date() } }
+        ).catch(() => {})
+
         for (const message of event.messages) {
           await handleIncoming(sessionId, sock, message).catch(error =>
-            log('error', 'Message handler failed', { sessionId, error: error.message })
+            log('error', 'Message handler failed', {
+              sessionId,
+              error: error.message
+            })
           )
         }
       })
-
-      return item
-    })().finally(() => locks.delete(sessionId))
-
-    locks.set(sessionId, promise)
-    return promise
-  }
 
   async function getQr(sessionId) {
     const cached = qrCache.get(sessionId)
