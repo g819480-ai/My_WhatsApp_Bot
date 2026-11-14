@@ -1,22 +1,856 @@
-const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)]
-const sessionKey='scanty_session_id'
-let sessionId=localStorage.getItem(sessionKey)
-if(!sessionId){sessionId='web_'+crypto.randomUUID().replaceAll('-','');localStorage.setItem(sessionKey,sessionId)}
-const state={startedAt:Date.now(),qrTimer:null,qrPoll:null}
-function toast(m){const e=$("#toast");e.textContent=m;e.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove("show"),3000)}
-async function api(path,opts={}){const url=path+(path.includes('?')?'&':'?')+'sessionId='+encodeURIComponent(sessionId);let body=opts.body;if(typeof body==='string'){try{body=JSON.stringify({...JSON.parse(body),sessionId})}catch{}}const r=await fetch(url,{...opts,body,headers:{'Content-Type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||`Request failed (${r.status})`);return d}
-function showSection(name){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.section===name));$$('[data-panel]').forEach(p=>p.classList.toggle('hidden',p.dataset.panel!==name));$("#sidebar").classList.remove('open');if(name==='qr')startQrPolling();if(name==='sessions')loadSessions();if(name==='logs')loadLogs()}
-$$('.nav-item').forEach(b=>b.onclick=()=>showSection(b.dataset.section));$$('[data-go]').forEach(b=>b.onclick=()=>showSection(b.dataset.go));$("#menuBtn").onclick=()=>$("#sidebar").classList.toggle('open');$("#logoutBtn").onclick=()=>toast("This dashboard has no login session to log out.")
-function uptime(){const s=Math.floor((Date.now()-state.startedAt)/1000),h=String(Math.floor(s/3600)).padStart(2,'0'),m=String(Math.floor(s%3600/60)).padStart(2,'0'),x=String(s%60).padStart(2,'0');$("#uptime").textContent=`${h}:${m}:${x}`}setInterval(uptime,1000)
-async function loadStatus(){try{const d=await api('/api/status');$("#totalAccounts").textContent=d.totalAccounts;$("#normalUsers").textContent=d.normalUsers;$("#admins").textContent=d.admins;$("#botStatus").textContent=d.status;$("#waStatus").textContent=d.whatsapp;$("#runStatus").textContent=d.status;$("#usersCount").textContent=d.normalUsers}catch(e){}}
-async function pairing(){const phone=$("#phoneInput").value.replace(/\D/g,'');if(phone.length<8){toast('Enter a valid international number.');return}const b=$("#pairBtn");b.disabled=true;$("#pairStatus").textContent='Requesting code…';try{const d=await api('/api/pairing-code',{method:'POST',body:JSON.stringify({phone})});$("#pairCode").textContent=d.code||'--------';$("#pairStatus").textContent=d.message||'Pairing code ready';toast('Pairing code generated.')}catch(e){$("#pairStatus").textContent=e.message;toast(e.message)}finally{b.disabled=false}}
-$("#pairBtn").onclick=pairing
-async function pollQr(){try{const d=await api('/api/qr');if(d.qr){$("#qrBox").innerHTML='';await new Promise((resolve,reject)=>{QRCode.toCanvas(d.qr,{width:260,margin:1},(err,c)=>{if(err)reject(err);else{$("#qrBox").appendChild(c);resolve()}})});$("#qrState").textContent='Waiting for scan';startCountdown(d.expiresIn||60)}else{$("#qrState").textContent=d.state||'Starting…'}}catch(e){$("#qrState").textContent=e.message}}
-function startCountdown(sec){clearInterval(state.qrTimer);let n=sec;$("#qrCountdown").textContent=`Expires in ${n}s`;state.qrTimer=setInterval(()=>{n--;$("#qrCountdown").textContent=n>0?`Expires in ${n}s`:'Waiting for a new QR…';if(n<=0)clearInterval(state.qrTimer)},1000)}
-function startQrPolling(){pollQr();clearInterval(state.qrPoll);state.qrPoll=setInterval(pollQr,2500)}
-$("#qrBtn").onclick=()=>pollQr()
-async function loadSessions(){try{const d=await fetch('/api/sessions').then(r=>r.json());$("#sessionsBody").innerHTML=d.sessions.map(s=>`<tr><td>${s.sessionId}</td><td><span class="dot ${s.status==='open'?'online':''}"></span>${s.status||'unknown'}</td><td>MongoDB</td><td>${s.updatedAt?new Date(s.updatedAt).toLocaleString():'—'}</td></tr>`).join('')||'<tr><td colspan="4">No sessions yet.</td></tr>'}catch{}}
-async function loadSettings(){try{const d=await api('/api/settings');const s=d.settings||{};const v=$$('.setting input');if(v[0])v[0].checked=s.alwaysOnline!==false;if(v[1])v[1].checked=s.autoViewStatus!==false;if(v[2])v[2].checked=s.statusReact!==false;if(v[3])v[3].checked=s.welcome!==false;if(v[4])v[4].checked=Boolean(s.goodbye);if(v[5])v[5].checked=s.autoReact!==false}catch(e){toast('Could not load settings: '+e.message)}}
-$("#saveSettings").onclick=async()=>{const v=$$('.setting input');try{await api('/api/settings',{method:'POST',body:JSON.stringify({alwaysOnline:v[0]?.checked,autoViewStatus:v[1]?.checked,statusReact:v[2]?.checked,welcome:v[3]?.checked,goodbye:v[4]?.checked,autoReact:v[5]?.checked})});toast('Settings saved.')}catch(e){toast(e.message)}}
-async function loadLogs(){try{const d=await fetch('/api/logs').then(r=>r.json());$("#logs").textContent=d.logs.map(x=>`[${new Date(x.createdAt).toLocaleTimeString()}] ${x.message}`).join('\n')||'No logs yet.'}catch{}}
-loadStatus();loadSettings();setInterval(loadStatus,5000);uptime()
+const $ = s => document.querySelector(s)
+const $$ = s => [...document.querySelectorAll(s)]
+
+const sessionKey = 'scanty_session_id'
+
+let sessionId =
+  localStorage.getItem(sessionKey)
+
+if (!sessionId) {
+  sessionId =
+    'web_' +
+    crypto
+      .randomUUID()
+      .replaceAll('-', '')
+
+  localStorage.setItem(
+    sessionKey,
+    sessionId
+  )
+}
+
+const state = {
+  startedAt: Date.now(),
+  qrTimer: null,
+  qrPoll: null,
+  qrBusy: false
+}
+
+function toast(message) {
+  const element =
+    $('#toast')
+
+  if (!element) return
+
+  element.textContent =
+    message
+
+  element.classList.add(
+    'show'
+  )
+
+  clearTimeout(
+    toast.timer
+  )
+
+  toast.timer =
+    setTimeout(() => {
+      element.classList.remove(
+        'show'
+      )
+    }, 3000)
+}
+
+async function api(
+  path,
+  options = {}
+) {
+  const separator =
+    path.includes('?')
+      ? '&'
+      : '?'
+
+  const url =
+    path +
+    separator +
+    'sessionId=' +
+    encodeURIComponent(
+      sessionId
+    )
+
+  let body =
+    options.body
+
+  if (
+    typeof body ===
+    'string'
+  ) {
+    try {
+      const parsed =
+        JSON.parse(body)
+
+      body =
+        JSON.stringify({
+          ...parsed,
+          sessionId
+        })
+    } catch {}
+  }
+
+  const response =
+    await fetch(
+      url,
+      {
+        ...options,
+        body,
+        headers: {
+          'Content-Type':
+            'application/json',
+
+          ...(options.headers ||
+            {})
+        }
+      }
+    )
+
+  const data =
+    await response
+      .json()
+      .catch(() => ({}))
+
+  if (!response.ok) {
+    throw new Error(
+      data.message ||
+      `Request failed (${response.status})`
+    )
+  }
+
+  return data
+}
+
+function showSection(
+  name
+) {
+  $$('.nav-item')
+    .forEach(button => {
+      button.classList.toggle(
+        'active',
+        button.dataset.section ===
+          name
+      )
+    })
+
+  $$('[data-panel]')
+    .forEach(panel => {
+      panel.classList.toggle(
+        'hidden',
+        panel.dataset.panel !==
+          name
+      )
+    })
+
+  $('#sidebar')
+    ?.classList.remove(
+      'open'
+    )
+
+  if (
+    name === 'qr'
+  ) {
+    startQrPolling()
+  }
+
+  if (
+    name === 'sessions'
+  ) {
+    loadSessions()
+  }
+
+  if (
+    name === 'logs'
+  ) {
+    loadLogs()
+  }
+}
+
+$$('.nav-item')
+  .forEach(button => {
+    button.onclick =
+      () =>
+        showSection(
+          button.dataset.section
+        )
+  })
+
+$$('[data-go]')
+  .forEach(button => {
+    button.onclick =
+      () =>
+        showSection(
+          button.dataset.go
+        )
+  })
+
+$('#menuBtn').onclick =
+  () =>
+    $('#sidebar')
+      ?.classList.toggle(
+        'open'
+      )
+
+$('#logoutBtn').onclick =
+  () =>
+    toast(
+      'This dashboard has no login session to log out.'
+    )
+
+function uptime() {
+  const seconds =
+    Math.floor(
+      (Date.now() -
+        state.startedAt) /
+        1000
+    )
+
+  const hours =
+    String(
+      Math.floor(
+        seconds / 3600
+      )
+    ).padStart(
+      2,
+      '0'
+    )
+
+  const minutes =
+    String(
+      Math.floor(
+        (seconds %
+          3600) /
+          60
+      )
+    ).padStart(
+      2,
+      '0'
+    )
+
+  const secs =
+    String(
+      seconds % 60
+    ).padStart(
+      2,
+      '0'
+    )
+
+  $('#uptime').textContent =
+    `${hours}:${minutes}:${secs}`
+}
+
+setInterval(
+  uptime,
+  1000
+)
+
+async function loadStatus() {
+  try {
+    const data =
+      await api(
+        '/api/status'
+      )
+
+    $('#totalAccounts')
+      .textContent =
+      data.totalAccounts
+
+    $('#normalUsers')
+      .textContent =
+      data.normalUsers
+
+    $('#admins')
+      .textContent =
+      data.admins
+
+    $('#botStatus')
+      .textContent =
+      data.status
+
+    $('#waStatus')
+      .textContent =
+      data.whatsapp
+
+    $('#runStatus')
+      .textContent =
+      data.status
+
+    $('#usersCount')
+      .textContent =
+      data.normalUsers
+  } catch {}
+}
+
+async function pairing() {
+  const input =
+    $('#phoneInput')
+
+  const phone =
+    input.value.replace(
+      /\D/g,
+      ''
+    )
+
+  if (
+    phone.length < 8
+  ) {
+    toast(
+      'Enter a valid international number.'
+    )
+
+    return
+  }
+
+  const button =
+    $('#pairBtn')
+
+  button.disabled =
+    true
+
+  $('#pairStatus')
+    .textContent =
+    'Connecting to WhatsApp…'
+
+  $('#pairCode')
+    .textContent =
+    '--------'
+
+  try {
+    const data =
+      await api(
+        '/api/pairing-code',
+        {
+          method:
+            'POST',
+
+          body:
+            JSON.stringify({
+              phone
+            })
+        }
+      )
+
+    if (
+      data.code
+    ) {
+      $('#pairCode')
+        .textContent =
+        data.code
+
+      $('#pairStatus')
+        .textContent =
+        data.message ||
+        'Pairing code ready'
+
+      toast(
+        'Pairing code generated.'
+      )
+    } else {
+      throw new Error(
+        data.message ||
+        'No pairing code was returned.'
+      )
+    }
+  } catch (
+    error
+  ) {
+    $('#pairStatus')
+      .textContent =
+      error.message
+
+    toast(
+      error.message
+    )
+  } finally {
+    button.disabled =
+      false
+  }
+}
+
+$('#pairBtn').onclick =
+  pairing
+
+function clearQr() {
+  clearInterval(
+    state.qrTimer
+  )
+
+  const box =
+    $('#qrBox')
+
+  if (!box) return
+
+  box.innerHTML =
+    '<div class="qr-placeholder">QR</div>'
+}
+
+function showQrPlaceholder(
+  text
+) {
+  const box =
+    $('#qrBox')
+
+  if (!box) return
+
+  box.innerHTML =
+    `<div class="qr-placeholder">${text}</div>`
+}
+
+function startCountdown(
+  seconds
+) {
+  clearInterval(
+    state.qrTimer
+  )
+
+  let remaining =
+    Math.max(
+      1,
+      Number(seconds) ||
+        60
+    )
+
+  $('#qrCountdown')
+    .textContent =
+    `Expires in ${remaining}s`
+
+  state.qrTimer =
+    setInterval(() => {
+      remaining--
+
+      if (
+        remaining > 0
+      ) {
+        $('#qrCountdown')
+          .textContent =
+          `Expires in ${remaining}s`
+
+        return
+      }
+
+      clearInterval(
+        state.qrTimer
+      )
+
+      $('#qrCountdown')
+        .textContent =
+        'Waiting for a new QR…'
+    }, 1000)
+}
+
+async function renderQr(
+  qr
+) {
+  const box =
+    $('#qrBox')
+
+  if (!box) return
+
+  if (
+    typeof QRCode ===
+    'undefined'
+  ) {
+    throw new Error(
+      'QR library failed to load.'
+    )
+  }
+
+  box.innerHTML =
+    ''
+
+  await new Promise(
+    (resolve, reject) => {
+      QRCode.toCanvas(
+        qr,
+        {
+          width: 280,
+          margin: 2,
+          errorCorrectionLevel:
+            'M'
+        },
+        (
+          error,
+          canvas
+        ) => {
+          if (
+            error
+          ) {
+            reject(
+              error
+            )
+
+            return
+          }
+
+          box.appendChild(
+            canvas
+          )
+
+          resolve()
+        }
+      )
+    }
+  )
+}
+
+async function pollQr() {
+  if (
+    state.qrBusy
+  ) {
+    return
+  }
+
+  state.qrBusy =
+    true
+
+  try {
+    $('#qrState')
+      .textContent =
+      'Generating QR…'
+
+    $('#qrCountdown')
+      .textContent =
+      'Please wait…'
+
+    const data =
+      await api(
+        '/api/qr'
+      )
+
+    /*
+     * Actual QR received.
+     */
+    if (
+      data.qr
+    ) {
+      await renderQr(
+        data.qr
+      )
+
+      $('#qrState')
+        .textContent =
+        'Waiting for scan'
+
+      startCountdown(
+        data.expiresIn ||
+          60
+      )
+
+      return
+    }
+
+    /*
+     * Already connected.
+     */
+    if (
+      data.state ===
+      'open'
+    ) {
+      clearQr()
+
+      $('#qrState')
+        .textContent =
+        'WhatsApp already connected'
+
+      $('#qrCountdown')
+        .textContent =
+        ''
+
+      return
+    }
+
+    /*
+     * Backend is still connecting.
+     */
+    $('#qrState')
+      .textContent =
+      data.message ||
+      'Waiting for WhatsApp QR…'
+
+    $('#qrCountdown')
+      .textContent =
+      'Generating…'
+  } catch (
+    error
+  ) {
+    $('#qrState')
+      .textContent =
+      error.message ||
+      'QR generation failed'
+
+    $('#qrCountdown')
+      .textContent =
+      'Press Refresh QR'
+
+    showQrPlaceholder(
+      'Refresh QR'
+    )
+  } finally {
+    state.qrBusy =
+      false
+  }
+}
+
+function startQrPolling() {
+  clearInterval(
+    state.qrPoll
+  )
+
+  /*
+   * The backend now waits for the QR event,
+   * so polling every 3 seconds is sufficient.
+   */
+  pollQr()
+
+  state.qrPoll =
+    setInterval(
+      () => {
+        pollQr()
+      },
+      3000
+    )
+}
+
+$('#qrBtn').onclick =
+  () => {
+    pollQr()
+  }
+
+async function loadSessions() {
+  try {
+    const response =
+      await fetch(
+        '/api/sessions'
+      )
+
+    const data =
+      await response.json()
+
+    $('#sessionsBody')
+      .innerHTML =
+      data.sessions
+        .map(
+          session => `
+            <tr>
+              <td>
+                ${escapeHtml(
+                  session.sessionId
+                )}
+              </td>
+
+              <td>
+                <span class="dot ${
+                  session.status ===
+                  'open'
+                    ? 'online'
+                    : ''
+                }"></span>
+
+                ${escapeHtml(
+                  session.status ||
+                    'unknown'
+                )}
+              </td>
+
+              <td>
+                ${escapeHtml(
+                  session.phone ||
+                    '—'
+                )}
+              </td>
+
+              <td>
+                ${
+                  session.updatedAt
+                    ? new Date(
+                        session.updatedAt
+                      ).toLocaleString()
+                    : '—'
+                }
+              </td>
+            </tr>
+          `
+        )
+        .join('') ||
+      '<tr><td colspan="4">No sessions yet.</td></tr>'
+  } catch {}
+}
+
+function escapeHtml(
+  value
+) {
+  return String(
+    value ?? ''
+  )
+    .replaceAll(
+      '&',
+      '&amp;'
+    )
+    .replaceAll(
+      '<',
+      '&lt;'
+    )
+    .replaceAll(
+      '>',
+      '&gt;'
+    )
+    .replaceAll(
+      '"',
+      '&quot;'
+    )
+    .replaceAll(
+      "'",
+      '&#039;'
+    )
+}
+
+async function loadSettings() {
+  try {
+    const data =
+      await api(
+        '/api/settings'
+      )
+
+    const settings =
+      data.settings ||
+      {}
+
+    const values =
+      $$('.setting input')
+
+    if (
+      values[0]
+    ) {
+      values[0].checked =
+        settings.alwaysOnline !==
+        false
+    }
+
+    if (
+      values[1]
+    ) {
+      values[1].checked =
+        settings.autoViewStatus !==
+        false
+    }
+
+    if (
+      values[2]
+    ) {
+      values[2].checked =
+        settings.statusReact !==
+        false
+    }
+
+    if (
+      values[3]
+    ) {
+      values[3].checked =
+        settings.welcome !==
+        false
+    }
+
+    if (
+      values[4]
+    ) {
+      values[4].checked =
+        Boolean(
+          settings.goodbye
+        )
+    }
+
+    if (
+      values[5]
+    ) {
+      values[5].checked =
+        settings.autoReact !==
+        false
+    }
+  } catch (
+    error
+  ) {
+    toast(
+      'Could not load settings: ' +
+        error.message
+    )
+  }
+}
+
+$('#saveSettings').onclick =
+  async () => {
+    const values =
+      $$('.setting input')
+
+    try {
+      await api(
+        '/api/settings',
+        {
+          method:
+            'POST',
+
+          body:
+            JSON.stringify({
+              alwaysOnline:
+                values[0]?.checked,
+
+              autoViewStatus:
+                values[1]?.checked,
+
+              statusReact:
+                values[2]?.checked,
+
+              welcome:
+                values[3]?.checked,
+
+              goodbye:
+                values[4]?.checked,
+
+              autoReact:
+                values[5]?.checked
+            })
+        }
+      )
+
+      toast(
+        'Settings saved.'
+      )
+    } catch (
+      error
+    ) {
+      toast(
+        error.message
+      )
+    }
+  }
+
+async function loadLogs() {
+  try {
+    const response =
+      await fetch(
+        '/api/logs'
+      )
+
+    const data =
+      await response.json()
+
+    $('#logs')
+      .textContent =
+      data.logs
+        .map(
+          entry =>
+            `[${new Date(
+              entry.createdAt
+            ).toLocaleTimeString()}] ${entry.message}`
+        )
+        .join(
+          '\n'
+        ) ||
+      'No logs yet.'
+  } catch {}
+}
+
+loadStatus()
+loadSettings()
+uptime()
+
+setInterval(
+  loadStatus,
+  5000
+)
