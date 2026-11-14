@@ -402,7 +402,7 @@ export function createWhatsAppManager({ sessions, sessionKeys, users, settings, 
     }
   }
 
-    return {
+  return {
     normalizeSessionId,
     start,
     getQr,
