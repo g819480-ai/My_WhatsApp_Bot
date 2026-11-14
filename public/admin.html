@@ -1,0 +1,124 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SCANTY MD BOT | Admin</title>
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+
+<div id="loginView" class="login">
+  <div class="brand">♛ SCANTY <span>MD BOT</span></div>
+  <form id="loginForm" class="login-card">
+    <p class="eyebrow">PRIVATE ADMIN CONTROL</p>
+    <h1>Admin Login</h1>
+    <p>Sign in to manage your bot.</p>
+    <input id="password" type="password"
+      placeholder="Administrator password" required>
+    <button type="submit">Unlock Dashboard</button>
+    <p id="loginError" class="error"></p>
+  </form>
+</div>
+
+<div id="appView" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">♛ SCANTY <span>MD BOT</span></div>
+    <nav>
+      <button class="nav active" data-page="overview">◈ Overview</button>
+      <button class="nav" data-page="users">♙ Users</button>
+      <button class="nav" data-page="sessions">▣ Sessions</button>
+      <button class="nav" data-page="settings">⚙ Bot Settings</button>
+      <button class="nav" data-page="logs">≋ Activity Logs</button>
+    </nav>
+    <button id="logout" class="logout">Sign Out</button>
+  </aside>
+
+  <main class="main">
+    <header>
+      <div>
+        <small>PRIVATE CONTROL ROOM</small>
+        <h1 id="pageTitle">Overview</h1>
+      </div>
+      <span class="secure">● SECURE ADMIN</span>
+    </header>
+
+    <section class="page" data-panel="overview">
+      <div class="stats">
+        <article><small>TOTAL USERS</small><strong id="totalUsers">—</strong></article>
+        <article><small>TOTAL SESSIONS</small><strong id="totalSessions">—</strong></article>
+        <article><small>CONNECTED</small><strong id="connected">—</strong></article>
+        <article><small>OFFLINE</small><strong id="offline">—</strong></article>
+      </div>
+      <div class="panel">
+        <h2>System Overview</h2>
+        <p>Manage users, WhatsApp sessions and bot configuration.</p>
+        <button data-jump="users">Manage Users →</button>
+        <button data-jump="sessions">Manage Sessions →</button>
+        <button data-jump="settings">Bot Settings →</button>
+      </div>
+    </section>
+
+    <section class="page hidden" data-panel="users">
+      <div class="panel">
+        <h2>User Management</h2>
+        <button id="refreshUsers">Refresh</button>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Phone</th><th>Session ID</th><th>Status</th><th>Updated</th></tr>
+            </thead>
+            <tbody id="usersRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="page hidden" data-panel="sessions">
+      <div class="panel">
+        <h2>WhatsApp Session Management</h2>
+        <button id="refreshSessions">Refresh</button>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Phone</th><th>Session ID</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="sessionRows"></tbody>
+          </table>
+        </div>
+        <p class="warning">
+          Disconnect preserves saved credentials. Remove permanently deletes
+          the selected session's saved WhatsApp credentials.
+        </p>
+      </div>
+    </section>
+
+    <section class="page hidden" data-panel="settings">
+      <div class="panel">
+        <h2>Global Bot Settings</h2>
+        <p>These settings are stored separately from individual user settings.</p>
+        <div id="settingsGrid" class="settings-grid"></div>
+        <label class="emoji-field">
+          Status Reaction Emoji
+          <input id="emoji" maxlength="8" value="❤️">
+        </label>
+        <button id="saveSettings">Save Settings</button>
+      </div>
+    </section>
+
+    <section class="page hidden" data-panel="logs">
+      <div class="panel">
+        <h2>Activity Logs</h2>
+        <button id="refreshLogs">Refresh</button>
+        <div id="logRows" class="logs"></div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast"></div>
+  </main>
+</div>
+
+<script src="/admin.js"></script>
+</body>
+</html>
