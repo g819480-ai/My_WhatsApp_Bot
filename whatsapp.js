@@ -414,3 +414,4 @@ export function createWhatsAppManager({ sessions, sessionKeys, users, settings, 
     updateSettings,
     stopAll
   }
+}
