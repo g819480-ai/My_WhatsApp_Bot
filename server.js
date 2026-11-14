@@ -6,11 +6,11 @@ import pino from 'pino'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MongoClient } from 'mongodb'
-import { createWhatsAppManager } from './src/whatsapp.js'
+import { createWhatsAppManager } from './whatsapp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
-const PORT = Number(process.env.PORT || 10000)
+const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 10000)
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
 
 if (!process.env.MONGO_URI) {
@@ -37,36 +37,23 @@ const logs = db.collection('bot_logs')
 await Promise.all([
   sessions.createIndex(
     { sessionId: 1 },
-    {
-      unique: true,
-      name: 'sessionId_unique_string',
-      partialFilterExpression: { sessionId: { $type: 'string' } }
-    }
+    { unique: true, name: 'sessionId_unique_string', partialFilterExpression: { sessionId: { $type: 'string' } } }
   ),
   sessionKeys.createIndex(
     { sessionId: 1, category: 1, keyId: 1 },
-    {
-      unique: true,
-      name: 'session_keys_unique_valid',
-      partialFilterExpression: {
-        sessionId: { $type: 'string' },
-        category: { $type: 'string' },
-        keyId: { $type: 'string' }
-      }
-    }
+    { unique: true, name: 'session_keys_unique_valid', partialFilterExpression: {
+      sessionId: { $type: 'string' }, category: { $type: 'string' }, keyId: { $type: 'string' }
+    } }
   ),
   users.createIndex(
     { sessionId: 1 },
-    {
-      unique: true,
-      name: 'users_sessionId_unique_string',
-      partialFilterExpression: { sessionId: { $type: 'string' } }
-    }
+    { unique: true, name: 'users_sessionId_unique_string', partialFilterExpression: { sessionId: { $type: 'string' } } }
   ),
+  settings.createIndex({ sessionId: 1 }, { unique: true, name: 'settings_sessionId_unique_string', partialFilterExpression: { sessionId: { $type: 'string' } } }),
   logs.createIndex({ createdAt: -1 })
-]) 
+])
 
-const manager = createWhatsAppManager({ sessions, sessionKeys, users, logs, logger })
+const manager = createWhatsAppManager({ sessions, sessionKeys, users, settings, logs, logger })
 
 const allowed = (process.env.CORS_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)
 app.use(cors({
@@ -89,9 +76,7 @@ app.get('/health', async (_req, res) => {
   }
 })
 
-app.get('/api/status', async (_req, res) => {
-  res.json(await manager.status())
-})
+app.get('/api/status', async (_req, res) => res.json(await manager.status()))
 
 app.get('/api/qr', async (req, res) => {
   const sessionId = manager.normalizeSessionId(req.query.sessionId)
@@ -100,13 +85,12 @@ app.get('/api/qr', async (req, res) => {
 
 app.post('/api/pairing-code', async (req, res) => {
   try {
-    const sessionId = manager.normalizeSessionId(req.body.sessionId)
+    const sessionId = manager.normalizeSessionId(req.body.sessionId || req.query.sessionId)
     const phone = String(req.body.phone || '').replace(/\D/g, '')
     if (phone.length < 8 || phone.length > 15) {
       return res.status(400).json({ ok: false, message: 'Invalid international phone number.' })
     }
-    const result = await manager.requestPairingCode(sessionId, phone)
-    res.json(result)
+    res.json(await manager.requestPairingCode(sessionId, phone))
   } catch (error) {
     logger.error({ err: error }, 'Pairing request failed')
     res.status(503).json({ ok: false, message: error.message || 'Pairing code request failed.' })
@@ -118,32 +102,36 @@ app.get('/api/sessions', async (_req, res) => {
 })
 
 app.get('/api/session/:sessionId', async (req, res) => {
-  const sessionId = manager.normalizeSessionId(req.params.sessionId)
-  res.json(await manager.sessionInfo(sessionId))
+  res.json(await manager.sessionInfo(manager.normalizeSessionId(req.params.sessionId)))
 })
 
 app.post('/api/settings', async (req, res) => {
-  const sessionId = manager.normalizeSessionId(req.body.sessionId)
+  const sessionId = manager.normalizeSessionId(req.body.sessionId || req.query.sessionId)
   const value = {
-    alwaysOnline: Boolean(req.body.alwaysOnline),
-    autoViewStatus: Boolean(req.body.autoViewStatus),
-    statusReact: Boolean(req.body.statusReact),
-    welcome: Boolean(req.body.welcome),
+    alwaysOnline: req.body.alwaysOnline !== false,
+    autoViewStatus: req.body.autoViewStatus !== false,
+    statusReact: req.body.statusReact !== false,
+    welcome: req.body.welcome !== false,
     goodbye: Boolean(req.body.goodbye),
-    autoReact: Boolean(req.body.autoReact),
+    autoReact: req.body.autoReact !== false,
+    statusReactEmoji: String(req.body.statusReactEmoji || '❤️').slice(0, 8),
     updatedAt: new Date()
   }
-  await settings.updateOne({ sessionId }, { $set: value }, { upsert: true })
+  await manager.updateSettings(sessionId, value)
   res.json({ ok: true, settings: value })
 })
 
 app.get('/api/settings', async (req, res) => {
   const sessionId = manager.normalizeSessionId(req.query.sessionId)
+  const defaults = {
+    alwaysOnline: true, autoViewStatus: true, statusReact: true,
+    welcome: true, goodbye: false, autoReact: true, statusReactEmoji: '❤️'
+  }
   const doc = await settings.findOne({ sessionId }, { projection: { _id: 0 } })
-  res.json({ ok: true, settings: doc || {
-    alwaysOnline: true, autoViewStatus: true, statusReact: false,
-    welcome: true, goodbye: false, autoReact: true
-  } })
+  if (!doc) {
+    await settings.updateOne({ sessionId }, { $setOnInsert: { sessionId, ...defaults, createdAt: new Date() } }, { upsert: true })
+  }
+  res.json({ ok: true, settings: { ...defaults, ...(doc || {}) } })
 })
 
 app.get('/api/logs', async (_req, res) => {
@@ -157,9 +145,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }))
 app.get(/.*/, (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')))
 
-const server = app.listen(PORT, () => {
-  logger.info({ port: PORT }, 'SCANTY MD BOT server running')
-})
+const server = app.listen(PORT, () => logger.info({ port: PORT }, 'SCANTY MD BOT server running'))
 
 const shutdown = async signal => {
   logger.info({ signal }, 'Shutting down')
