@@ -1,21 +1,35 @@
+
 import {
   initAuthCreds,
   BufferJSON,
   makeCacheableSignalKeyStore
 } from '@whiskeysockets/baileys'
 
-const encode = value => JSON.stringify(value, BufferJSON.replacer)
-const decode = value => JSON.parse(value, BufferJSON.reviver)
+const encode = value =>
+  JSON.stringify(value, BufferJSON.replacer)
 
-export async function useMongoAuthState({ sessions, sessionKeys, sessionId, logger }) {
+const decode = value =>
+  JSON.parse(value, BufferJSON.reviver)
+
+export async function useMongoAuthState({
+  sessions,
+  sessionKeys,
+  sessionId,
+  logger
+}) {
   const session = await sessions.findOne({ sessionId })
 
   let creds
+
   if (session?.creds) {
     try {
       creds = decode(session.creds)
     } catch (err) {
-      logger.warn({ err, sessionId }, 'Stored credentials could not be decoded; creating fresh credentials')
+      logger?.warn?.(
+        { err, sessionId },
+        'Stored credentials could not be decoded; creating fresh credentials'
+      )
+
       creds = initAuthCreds()
     }
   } else {
@@ -24,55 +38,107 @@ export async function useMongoAuthState({ sessions, sessionKeys, sessionId, logg
 
   const keys = {
     get: async (type, ids) => {
+      if (!ids.length) return {}
+
       const docs = await sessionKeys.find({
         sessionId,
         category: type,
         keyId: { $in: ids }
       }).toArray()
 
-      const out = {}
+      const values = new Map(
+        docs.map(doc => [doc.keyId, doc.value])
+      )
+
+      const result = {}
+
       for (const id of ids) {
-        const doc = docs.find(x => x.keyId === id)
-        if (doc?.value) out[id] = decode(doc.value)
+        const value = values.get(id)
+
+        if (value !== undefined && value !== null) {
+          try {
+            result[id] = decode(value)
+          } catch (err) {
+            logger?.warn?.(
+              { err, sessionId, category: type, keyId: id },
+              'Could not decode stored WhatsApp session key'
+            )
+          }
+        }
       }
-      return out
+
+      return result
     },
+
     set: async data => {
-      const ops = []
-      for (const category of Object.keys(data)) {
+      const operations = []
+
+      for (const category of Object.keys(data || {})) {
         const values = data[category] || {}
+
         for (const keyId of Object.keys(values)) {
           const value = values[keyId]
+
           if (value === null || value === undefined) {
-            ops.push({
-              deleteOne: { filter: { sessionId, category, keyId } }
+            operations.push({
+              deleteOne: {
+                filter: {
+                  sessionId,
+                  category,
+                  keyId
+                }
+              }
             })
           } else {
-            ops.push({
+            operations.push({
               updateOne: {
-                filter: { sessionId, category, keyId },
-                update: { $set: { sessionId, category, keyId, value: encode(value), updatedAt: new Date() } },
+                filter: {
+                  sessionId,
+                  category,
+                  keyId
+                },
+                update: {
+                  $set: {
+                    sessionId,
+                    category,
+                    keyId,
+                    value: encode(value),
+                    updatedAt: new Date()
+                  }
+                },
                 upsert: true
               }
             })
           }
         }
       }
-      if (ops.length) await sessionKeys.bulkWrite(ops, { ordered: false })
+
+      if (operations.length) {
+        await sessionKeys.bulkWrite(
+          operations,
+          { ordered: false }
+        )
+      }
     }
   }
 
   const saveCreds = async () => {
+    // Only a registered WhatsApp account is a restorable session.
+    // Freshly initialized credentials must not be treated as linked.
+    const registered = creds.registered === true
+
     await sessions.updateOne(
       { sessionId },
       {
         $set: {
           sessionId,
           creds: encode(creds),
-          hasCreds: true,
+          hasCreds: registered,
           updatedAt: new Date()
         },
-        $setOnInsert: { createdAt: new Date() }
+        $setOnInsert: {
+          createdAt: new Date()
+        }
       },
       { upsert: true }
     )
@@ -83,5 +149,8 @@ export async function useMongoAuthState({ sessions, sessionKeys, sessionId, logg
     keys: makeCacheableSignalKeyStore(keys, logger)
   }
 
-  return { state, saveCreds }
+  return {
+    state,
+    saveCreds
+  }
 }
