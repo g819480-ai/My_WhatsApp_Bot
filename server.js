@@ -54,6 +54,12 @@ await Promise.all([
 ])
 
 const manager = createWhatsAppManager({ sessions, sessionKeys, users, settings, logs, logger })
+try {
+  const result = await manager.restoreSessions()
+  logger.info(result, 'WhatsApp saved sessions restoration completed')
+} catch (error) {
+  logger.error({ err: error }, 'WhatsApp saved sessions restoration failed')
+}
 
 const allowed = (process.env.CORS_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean)
 app.use(cors({
