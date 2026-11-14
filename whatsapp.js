@@ -272,7 +272,10 @@ export function createWhatsAppManager({ sessions, sessionKeys, users, settings, 
           }
         }
       })
-
+await log('info', 'MESSAGE EVENT RECEIVED', {
+  eventType: event?.type,
+  messageCount: event?.messages?.length || 0
+})
       sock.ev.on('messages.upsert', async event => {
         if (event?.type !== 'notify' || !Array.isArray(event.messages)) return
         await sessions.updateOne({ sessionId }, { $set: { lastMessageAt: new Date() } }).catch(() => {})
