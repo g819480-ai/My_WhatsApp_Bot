@@ -33,6 +33,13 @@ const sessionKeys = db.collection('whatsapp_session_keys')
 const users = db.collection('bot_users')
 const settings = db.collection('bot_settings')
 const logs = db.collection('bot_logs')
+// Remove obsolete legacy index without deleting any documents.
+const settingsIndexes = await settings.indexes()
+
+if (settingsIndexes.some(index => index.name === 'user_id_1')) {
+  await settings.dropIndex('user_id_1')
+  logger.warn('Removed obsolete bot_settings index: user_id_1')
+}
 
 await Promise.all([
   sessions.createIndex(
