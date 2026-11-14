@@ -338,7 +338,48 @@ export function createWhatsAppManager({ sessions, sessionKeys, users, settings, 
   async function listSessions() {
     return sessions.find({}, { projection: { _id: 0, creds: 0 } }).sort({ updatedAt: -1 }).limit(100).toArray()
   }
+  async function restoreSessions() {
+    await log('info', 'Saved WhatsApp session restoration started')
 
+    const savedSessions = await sessions.find({
+      hasCreds: true,
+      creds: { $exists: true, $ne: null },
+      status: { $ne: 'logged_out' }
+    }).project({ sessionId: 1 }).toArray()
+
+    let restored = 0
+    let failed = 0
+
+    for (const session of savedSessions) {
+      if (!session.sessionId) continue
+
+      try {
+        await start(session.sessionId)
+        restored++
+
+        await log('info', 'Saved WhatsApp session socket started', {
+          sessionId: session.sessionId
+        })
+      } catch (error) {
+        failed++
+
+        await log('error', 'Saved WhatsApp session restoration failed', {
+          sessionId: session.sessionId,
+          error: error.message
+        })
+      }
+    }
+
+    const result = {
+      found: savedSessions.length,
+      started: restored,
+      failed
+    }
+
+    await log('info', 'Saved WhatsApp session restoration finished', result)
+
+    return result
+  }
   async function status() {
     const totalAccounts = await sessions.countDocuments({ status: { $in: ['open', 'connecting', 'qr', 'pairing'] } })
     const admins = await users.countDocuments({ role: 'admin' })
@@ -361,5 +402,15 @@ export function createWhatsAppManager({ sessions, sessionKeys, users, settings, 
     }
   }
 
-  return { normalizeSessionId, start, getQr, requestPairingCode, sessionInfo, listSessions, status, updateSettings, stopAll }
-}
+    return {
+    normalizeSessionId,
+    start,
+    getQr,
+    requestPairingCode,
+    sessionInfo,
+    listSessions,
+    restoreSessions,
+    status,
+    updateSettings,
+    stopAll
+  }
