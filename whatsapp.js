@@ -5,6 +5,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys'
 import { useMongoAuthState } from './mongo-auth.js'
+import { createMessageHandler } from './message-handler.js'
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
