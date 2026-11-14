@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#020b18">
+  <title>SCANTY MD BOT — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">◔</div>
+        <div>
+          <div class="brand-name">SCANTY <span>MD BOT</span></div>
+          <div class="brand-subtitle">Multi-Device WhatsApp Bot</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-section="dashboard"><span>⌂</span>Dashboard</button>
+        <button class="nav-item" data-section="pairing"><span>⌘</span>Pairing Code</button>
+        <button class="nav-item" data-section="qr"><span>▦</span>QR Code</button>
+        <button class="nav-item" data-section="sessions"><span>⇄</span>Sessions</button>
+        <button class="nav-item" data-section="settings"><span>⚙</span>Settings</button>
+        <button class="nav-item" data-section="features"><span>✚</span>Features</button>
+        <button class="nav-item" data-section="users"><span>♙</span>Users</button>
+        <button class="nav-item" data-section="bans"><span>⊘</span>Bans</button>
+        <button class="nav-item" data-section="logs"><span>▤</span>Logs</button>
+        <button class="nav-item" data-section="about"><span>ⓘ</span>About</button>
+      </nav>
+
+      <button class="logout" id="logoutBtn"><span>↪</span>Logout</button>
+
+      <div class="sidebar-footer">
+        <div class="mini-crown">♛</div>
+        <div>
+          <strong>SCANTY MD BOT</strong>
+          <small>Powered by Innovation</small>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="mobile-menu" id="menuBtn">☰</button>
+        <div class="topbar-spacer"></div>
+        <button class="icon-button notification" aria-label="Notifications">♟<b>3</b></button>
+        <div class="profile">
+          <div class="avatar">●</div>
+          <div>
+            <strong>Scanty Ads</strong>
+            <span>Administrator <i></i></span>
+          </div>
+        </div>
+      </header>
+
+      <section class="hero" data-section-panel="dashboard">
+        <div class="hero-copy">
+          <p class="eyebrow">WELCOME TO</p>
+          <h1><span>SCANTY</span> MD BOT</h1>
+          <h2>Your Ultimate WhatsApp Automation Bot</h2>
+          <div class="reliability">Smart • Fast • Reliable</div>
+        </div>
+        <div class="robot-orb" aria-hidden="true"><div class="orb-ring"></div><div class="orb-core">◉</div></div>
+      </section>
+
+      <section class="page" data-section-panel="dashboard">
+        <div class="stats-grid">
+          <article class="stat-card green"><div class="stat-icon">♟</div><div><strong id="totalAccounts">1</strong><span>Total Accounts</span></div></article>
+          <article class="stat-card blue"><div class="stat-icon">●</div><div><strong id="normalUsers">1</strong><span>Normal Users</span></div></article>
+          <article class="stat-card purple"><div class="stat-icon">♛</div><div><strong id="admins">0</strong><span>Administrators</span></div></article>
+          <article class="stat-card cyan"><div class="stat-icon">⌁</div><div><strong id="botStatus">Online</strong><span>Bot Status</span></div></article>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="panel overview">
+            <div class="panel-title"><span class="title-icon green-text">▮</span>Your Bot Overview</div>
+            <div class="status-row"><span class="check">✓</span><span>WhatsApp Connected</span><em class="pill active">Active</em></div>
+            <div class="status-row"><span class="check">✓</span><span>Database Connected</span><em class="pill active">Connected</em></div>
+            <div class="status-row"><span class="check">✓</span><span>Bot Running</span><em class="pill active">Online</em></div>
+            <div class="status-row"><span class="check">✓</span><span>Uptime</span><em class="pill uptime" id="uptime">00:12:34</em></div>
+          </article>
+
+          <article class="panel quick-actions">
+            <div class="panel-title"><span class="title-icon yellow-text">ϟ</span>Quick Actions</div>
+            <button class="action green-action" data-go="pairing">⌘ <span>Get Pairing Code</span></button>
+            <button class="action blue-action" data-go="qr">▦ <span>Get QR Code</span></button>
+            <button class="action purple-action" data-go="settings">⚙ <span>Manage Settings</span></button>
+          </article>
+        </div>
+      </section>
+
+      <section class="page hidden" data-section-panel="pairing">
+        <div class="section-heading"><h2>Pairing Code</h2><p>Connect a WhatsApp account using a phone number.</p></div>
+        <div class="connection-panel">
+          <div class="connection-form">
+            <label>Phone Number</label>
+            <div class="phone-input"><span>+</span><input id="phoneInput" inputmode="numeric" placeholder="233XXXXXXXXX"></div>
+            <button class="action green-action" id="pairBtn">Generate Pairing Code</button>
+            <p class="hint">Use the full international number without spaces or the leading +.</p>
+          </div>
+          <div class="code-display">
+            <span>PAIRING CODE</span>
+            <strong id="pairCode">────────</strong>
+            <small id="pairStatus">Ready to generate</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="page hidden" data-section-panel="qr">
+        <div class="section-heading"><h2>QR Code</h2><p>Scan this code from WhatsApp → Linked Devices.</p></div>
+        <div class="qr-layout">
+          <div class="qr-card">
+            <div id="qrBox"><div class="qr-placeholder">QR</div></div>
+            <div class="qr-meta"><span id="qrState">Ready</span><span id="qrCountdown">—</span></div>
+            <button class="action blue-action" id="qrBtn">Generate / Refresh QR</button>
+          </div>
+          <div class="instruction-panel">
+            <h3>How to connect</h3>
+            <ol>
+              <li>Open WhatsApp on your phone.</li>
+              <li>Open <b>Linked Devices</b>.</li>
+              <li>Tap <b>Link a Device</b>.</li>
+              <li>Scan the QR code shown here.</li>
+              <li>Keep this page open until the connection is confirmed.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="page hidden" data-section-panel="sessions">
+        <div class="section-heading"><h2>Sessions</h2><p>Connected WhatsApp accounts and session health.</p></div>
+        <div class="table-panel"><table><thead><tr><th>Session</th><th>Status</th><th>Database</th><th>Last Activity</th><th>Action</th></tr></thead>
+          <tbody id="sessionsBody"><tr><td>Primary Account</td><td><span class="dot online"></span> Online</td><td>Connected</td><td>Just now</td><td><button class="small-btn">Manage</button></td></tr></tbody>
+        </table></div>
+      </section>
+
+      <section class="page hidden" data-section-panel="settings">
+        <div class="section-heading"><h2>Settings</h2><p>Control the dashboard connection and bot behavior.</p></div>
+        <div class="settings-grid">
+          <label class="setting">Always Online <input type="checkbox" checked><span></span></label>
+          <label class="setting">Auto View Status <input type="checkbox" checked><span></span></label>
+          <label class="setting">Status React <input type="checkbox"><span></span></label>
+          <label class="setting">Welcome Message <input type="checkbox" checked><span></span></label>
+          <label class="setting">Goodbye Message <input type="checkbox"><span></span></label>
+          <label class="setting">Auto React <input type="checkbox" checked><span></span></label>
+        </div>
+        <button class="action purple-action save-settings" id="saveSettings">Save Settings</button>
+      </section>
+
+      <section class="page hidden" data-section-panel="features">
+        <div class="section-heading"><h2>Features</h2><p>Available SCANTY MD BOT automation modules.</p></div>
+        <div class="feature-grid">
+          <div>🔗 Antilink</div><div>👁 Auto View Status</div><div>💾 Auto Save Contacts</div><div>❤️ Status React</div>
+          <div>🛡 Anti Delete</div><div>📇 VCF Export</div><div>⬆ Promote / Demote</div><div>🤖 AI Replies</div>
+        </div>
+      </section>
+
+      <section class="page hidden" data-section-panel="users">
+        <div class="section-heading"><h2>Users</h2><p>Dashboard account overview.</p></div>
+        <div class="empty-panel"><strong>1</strong><span>Normal user account</span></div>
+      </section>
+
+      <section class="page hidden" data-section-panel="bans">
+        <div class="section-heading"><h2>Bans</h2><p>Manage blocked accounts and visitors.</p></div>
+        <div class="empty-panel"><strong>0</strong><span>No banned users</span></div>
+      </section>
+
+      <section class="page hidden" data-section-panel="logs">
+        <div class="section-heading"><h2>Logs</h2><p>Recent system events.</p></div>
+        <pre class="logs" id="logs">[03:12:10] Dashboard loaded
+[03:12:11] MongoDB connection: connected
+[03:12:12] WhatsApp connection: online
+[03:12:13] Session health check: passed</pre>
+      </section>
+
+      <section class="page hidden" data-section-panel="about">
+        <div class="section-heading"><h2>About SCANTY MD BOT</h2><p>Multi-device WhatsApp automation dashboard.</p></div>
+        <div class="about-card"><h3>SCANTY MD BOT</h3><p>Smart • Fast • Reliable</p><p>This dashboard is designed as a lightweight control panel. Connect the API endpoints in <code>app.js</code> to make pairing, QR, sessions and settings use your real backend.</p></div>
+      </section>
+
+      <footer class="footer"><span>♛ SCANTY MD BOT &nbsp; Powered by Innovation</span><span>© 2026 SCANTY MD BOT. All rights reserved. ♥</span></footer>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
