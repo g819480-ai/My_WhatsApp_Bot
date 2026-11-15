@@ -124,7 +124,8 @@ export function createWhatsAppManager({
     return next
   }
 
-  
+  // Send normal text messages only.
+  // Status messages are handled separately in messages.upsert.
   async function sendText(sock, jid, text) {
     if (typeof text !== 'string' || !text.trim()) {
       return
@@ -138,12 +139,6 @@ export function createWhatsAppManager({
       text: text.trim()
     })
   }
-
-}
-  if (typeof text !== 'string' || !text.trim()) return
-
-  await sock.sendMessage(jid, { text: text.trim() })
-}
 
   const handleIncoming = createMessageHandler({
     sessions,
