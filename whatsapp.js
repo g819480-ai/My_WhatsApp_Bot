@@ -125,10 +125,11 @@ export function createWhatsAppManager({
   }
 
   async function sendText(sock, jid, text) {
-    if (!jid) return
+  if (!jid || jid === 'status@broadcast') return
+  if (typeof text !== 'string' || !text.trim()) return
 
-    await sock.sendMessage(jid, { text })
-  }
+  await sock.sendMessage(jid, { text: text.trim() })
+}
 
   const handleIncoming = createMessageHandler({
     sessions,
