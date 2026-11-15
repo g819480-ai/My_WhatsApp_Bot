@@ -125,7 +125,23 @@ export function createWhatsAppManager({
   }
 
   async function sendText(sock, jid, text) {
-  if (!jid || jid === 'status@broadcast') return
+  if (jid === 'status@broadcast') {
+  const config = await getSettings(sessionId)
+  const key = message.key
+
+  try {
+    if (config.autoViewStatus && key) {
+      await sock.readMessages([key])
+    }
+  } catch (error) {
+    await log('warn', 'Status viewing failed', {
+      sessionId,
+      error: error?.message || String(error)
+    })
+  }
+
+  continue
+}
   if (typeof text !== 'string' || !text.trim()) return
 
   await sock.sendMessage(jid, { text: text.trim() })
