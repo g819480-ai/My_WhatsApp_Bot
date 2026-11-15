@@ -1,4 +1,6 @@
 
+import { randomUUID } from 'node:crypto'
+
 import {
   initAuthCreds,
   BufferJSON,
@@ -15,13 +17,57 @@ export async function useMongoAuthState({
   sessions,
   sessionKeys,
   sessionId,
-  logger
+  logger,
+  freshAuth = false
 }) {
   const session = await sessions.findOne({ sessionId })
 
+  // Only create a fresh generation when the caller explicitly
+  // requests it for a session confirmed as logged out.
+  const startFresh =
+    freshAuth === true &&
+    session?.status === 'logged_out'
+
+  const authGeneration = startFresh
+    ? randomUUID()
+    : session?.authGeneration || null
+
   let creds
 
-  if (session?.creds) {
+  if (startFresh) {
+    creds = initAuthCreds()
+
+    const archive = session.creds
+      ? {
+          savedAt: new Date(),
+          authGeneration: session.authGeneration || null,
+          creds: session.creds
+        }
+      : null
+
+    const update = {
+      $set: {
+        authGeneration,
+        hasCreds: false,
+        status: 'connecting',
+        updatedAt: new Date()
+      }
+    }
+
+    if (archive) {
+      update.$push = { previousAuth: archive }
+    }
+
+    await sessions.updateOne(
+      { sessionId, status: 'logged_out' },
+      update
+    )
+
+    logger?.info?.(
+      { sessionId, authGeneration },
+      'Starting fresh WhatsApp authentication generation'
+    )
+  } else if (session?.creds) {
     try {
       creds = decode(session.creds)
     } catch (err) {
@@ -29,6 +75,7 @@ export async function useMongoAuthState({
         { err, sessionId },
         'Saved WhatsApp credentials could not be decoded'
       )
+
       throw new Error(
         'Saved WhatsApp credentials are unreadable. Existing session data was preserved.'
       )
@@ -37,14 +84,22 @@ export async function useMongoAuthState({
     creds = initAuthCreds()
   }
 
+  const keyScope = authGeneration
+    ? { sessionId, authGeneration }
+    : {
+        sessionId,
+        authGeneration: { $exists: false }
+      }
+
   let saveQueue = Promise.resolve()
+  let keyQueue = Promise.resolve()
 
   const keys = {
     get: async (type, ids) => {
       if (!ids.length) return {}
 
       const docs = await sessionKeys.find({
-        sessionId,
+        ...keyScope,
         category: type,
         keyId: { $in: ids }
       }).toArray()
@@ -86,16 +141,25 @@ export async function useMongoAuthState({
           if (value === null || value === undefined) {
             operations.push({
               deleteOne: {
-                filter: { sessionId, category, keyId }
+                filter: {
+                  ...keyScope,
+                  category,
+                  keyId
+                }
               }
             })
           } else {
             operations.push({
               updateOne: {
-                filter: { sessionId, category, keyId },
+                filter: {
+                  ...keyScope,
+                  category,
+                  keyId
+                },
                 update: {
                   $set: {
                     sessionId,
+                    authGeneration,
                     category,
                     keyId,
                     value: encode(value),
@@ -110,10 +174,16 @@ export async function useMongoAuthState({
       }
 
       if (operations.length) {
-        await sessionKeys.bulkWrite(
-          operations,
-          { ordered: false }
-        )
+        keyQueue = keyQueue
+          .catch(() => {})
+          .then(() =>
+            sessionKeys.bulkWrite(
+              operations,
+              { ordered: false }
+            )
+          )
+
+        await keyQueue
       }
     }
   }
@@ -122,33 +192,41 @@ export async function useMongoAuthState({
     const snapshot = encode(creds)
     const registered = creds.registered === true
 
-    saveQueue = saveQueue.catch(() => {}).then(async () => {
-      await sessions.updateOne(
-        { sessionId },
-        {
-          $set: {
-            sessionId,
-            creds: snapshot,
-            hasCreds: registered,
-            updatedAt: new Date()
+    saveQueue = saveQueue
+      .catch(() => {})
+      .then(async () => {
+        await sessions.updateOne(
+          { sessionId },
+          {
+            $set: {
+              sessionId,
+              creds: snapshot,
+              authGeneration,
+              hasCreds: registered,
+              updatedAt: new Date()
+            },
+            $setOnInsert: {
+              createdAt: new Date()
+            }
           },
-          $setOnInsert: {
-            createdAt: new Date()
-          }
-        },
-        { upsert: true }
-      )
+          { upsert: true }
+        )
 
-      logger?.info?.(
-        { sessionId, registered },
-        'WhatsApp credentials saved to MongoDB'
-      )
-    })
+        logger?.info?.(
+          { sessionId, registered, authGeneration },
+          'WhatsApp credentials saved to MongoDB'
+        )
+      })
 
     return saveQueue
   }
 
-  const flushCreds = () => saveQueue
+  const flushCreds = async () => {
+    await Promise.all([
+      saveQueue,
+      keyQueue
+    ])
+  }
 
   const state = {
     creds,
@@ -158,6 +236,7 @@ export async function useMongoAuthState({
   return {
     state,
     saveCreds,
-    flushCreds
+    flushCreds,
+    authGeneration
   }
 }
