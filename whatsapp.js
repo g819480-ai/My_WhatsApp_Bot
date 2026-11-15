@@ -40,7 +40,7 @@ export function createWhatsAppManager({
 
   async function log(level, message, extra = {}) {
     try {
-      logger[level]?.(extra, message)
+      logger?.[level]?.(extra, message)
     } catch {}
 
     try {
@@ -60,6 +60,82 @@ export function createWhatsAppManager({
     }
 
     return `web_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`
+  }
+
+  function transportIsClosed(item) {
+    const state = item?.sock?.ws?.readyState
+
+    return state === 2 || state === 3
+  }
+
+  function clearReconnectTimer(sessionId) {
+    const timer = reconnectTimers.get(sessionId)
+
+    if (timer) clearTimeout(timer)
+
+    reconnectTimers.delete(sessionId)
+  }
+
+  function clearPairing(sessionId) {
+    pairingCache.delete(sessionId)
+  }
+
+  function resolveQrWaiters(sessionId, value) {
+    const waiters = qrWaiters.get(sessionId) || []
+
+    qrWaiters.delete(sessionId)
+
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer)
+      waiter.resolve(value)
+    }
+  }
+
+  function rejectQrWaiters(sessionId, error) {
+    const waiters = qrWaiters.get(sessionId) || []
+
+    qrWaiters.delete(sessionId)
+
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer)
+      waiter.reject(error)
+    }
+  }
+
+  function waitForQr(sessionId, timeout = 30000) {
+    const cached = qrCache.get(sessionId)
+
+    if (cached && cached.expiresAt > Date.now()) {
+      return Promise.resolve(cached)
+    }
+
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: null
+      }
+
+      waiter.timer = setTimeout(() => {
+        const list = qrWaiters.get(sessionId) || []
+        const remaining = list.filter(item => item !== waiter)
+
+        if (remaining.length) {
+          qrWaiters.set(sessionId, remaining)
+        } else {
+          qrWaiters.delete(sessionId)
+        }
+
+        reject(new Error(
+          'WhatsApp did not generate a QR code in time. Please refresh and try again.'
+        ))
+      }, timeout)
+
+      const list = qrWaiters.get(sessionId) || []
+
+      list.push(waiter)
+      qrWaiters.set(sessionId, list)
+    })
   }
 
   async function getSettings(sessionId) {
@@ -124,8 +200,6 @@ export function createWhatsAppManager({
     return next
   }
 
-  // Send normal text messages only.
-  // Status messages are handled separately in messages.upsert.
   async function sendText(sock, jid, text) {
     if (typeof text !== 'string' || !text.trim()) {
       return
@@ -148,74 +222,59 @@ export function createWhatsAppManager({
     log
   })
 
-  function clearReconnectTimer(sessionId) {
-    const timer = reconnectTimers.get(sessionId)
+  async function persistCreds(item) {
+    if (!item || item.closed && shuttingDown === false) {
+      return
+    }
 
-    if (timer) clearTimeout(timer)
+    item.pendingCredSave = item.pendingCredSave
+      .then(() => item.saveCreds())
+      .catch(error => {
+        log('error', 'WhatsApp credentials save failed', {
+          sessionId: item.sessionId,
+          error: error?.message || String(error)
+        })
+      })
 
-    reconnectTimers.delete(sessionId)
+    return item.pendingCredSave
   }
 
-  function resolveQrWaiters(sessionId, value) {
-    const waiters = qrWaiters.get(sessionId) || []
+  async function flushItemCreds(item) {
+    if (!item) return
 
-    qrWaiters.delete(sessionId)
-
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timer)
-      waiter.resolve(value)
+    try {
+      await item.pendingCredSave
+      await item.flushCreds?.()
+    } catch (error) {
+      await log('error', 'WhatsApp credential flush failed', {
+        sessionId: item.sessionId,
+        error: error?.message || String(error)
+      })
     }
   }
 
-  function rejectQrWaiters(sessionId, error) {
-    const waiters = qrWaiters.get(sessionId) || []
+  async function retireStaleSocket(sessionId, item) {
+    if (!item) return
 
-    qrWaiters.delete(sessionId)
+    item.closed = true
 
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timer)
-      waiter.reject(error)
-    }
-  }
-
-  function waitForQr(sessionId, timeout = 25000) {
-    const cached = qrCache.get(sessionId)
-
-    if (cached && cached.expiresAt > Date.now()) {
-      return Promise.resolve(cached)
+    if (sockets.get(sessionId) === item) {
+      sockets.delete(sessionId)
     }
 
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        resolve,
-        reject,
-        timer: null
-      }
+    qrCache.delete(sessionId)
+    clearPairing(sessionId)
 
-      waiter.timer = setTimeout(() => {
-        const list = qrWaiters.get(sessionId) || []
-        const remaining = list.filter(item => item !== waiter)
+    rejectQrWaiters(
+      sessionId,
+      new Error('The previous WhatsApp connection ended. Please try again.')
+    )
 
-        if (remaining.length) {
-          qrWaiters.set(sessionId, remaining)
-        } else {
-          qrWaiters.delete(sessionId)
-        }
+    try {
+      item.sock?.end(undefined)
+    } catch {}
 
-        reject(new Error(
-          'WhatsApp did not generate a QR code in time. Please refresh and try again.'
-        ))
-      }, timeout)
-
-      const list = qrWaiters.get(sessionId) || []
-
-      list.push(waiter)
-      qrWaiters.set(sessionId, list)
-    })
-  }
-
-  function clearPairing(sessionId) {
-    pairingCache.delete(sessionId)
+    await flushItemCreds(item)
   }
 
   async function start(sessionId, options = {}) {
@@ -223,7 +282,12 @@ export function createWhatsAppManager({
       throw new Error('WhatsApp service is shutting down.')
     }
 
-    const existing = sockets.get(sessionId)
+    let existing = sockets.get(sessionId)
+
+    if (existing && !existing.closed && transportIsClosed(existing)) {
+      await retireStaleSocket(sessionId, existing)
+      existing = null
+    }
 
     if (existing && !existing.closed) {
       if (options.phone && !existing.phone) {
@@ -248,12 +312,18 @@ export function createWhatsAppManager({
     const startPromise = (async () => {
       await getSettings(sessionId)
 
-      const { state, saveCreds } = await useMongoAuthState({
+      const auth = await useMongoAuthState({
         sessions,
         sessionKeys,
         sessionId,
         logger
       })
+
+      const {
+        state,
+        saveCreds,
+        flushCreds
+      } = auth
 
       let version
 
@@ -261,7 +331,7 @@ export function createWhatsAppManager({
         const latest = await fetchLatestBaileysVersion()
         version = latest.version
       } catch (error) {
-        logger.warn(
+        logger?.warn?.(
           { err: error, sessionId },
           'Could not fetch latest WhatsApp version; using fallback'
         )
@@ -293,7 +363,10 @@ export function createWhatsAppManager({
         connectedAt: null,
         pairingPromise: null,
         closed: false,
-        registered: state.creds.registered === true
+        registered: state.creds.registered === true,
+        saveCreds,
+        flushCreds,
+        pendingCredSave: Promise.resolve()
       }
 
       sockets.set(sessionId, item)
@@ -316,13 +389,7 @@ export function createWhatsAppManager({
 
       sock.ev.on('creds.update', () => {
         item.registered = state.creds.registered === true
-
-        saveCreds().catch(error => {
-          log('error', 'WhatsApp credentials save failed', {
-            sessionId,
-            error: error?.message || String(error)
-          })
-        })
+        persistCreds(item)
       })
 
       sock.ev.on('connection.update', update => {
@@ -381,6 +448,11 @@ export function createWhatsAppManager({
 
             qrCache.delete(sessionId)
             clearPairing(sessionId)
+
+            // Save the final registered credentials before reporting
+            // this connection as fully established.
+            await persistCreds(item)
+            await flushItemCreds(item)
 
             await sessions.updateOne(
               { sessionId },
@@ -471,6 +543,8 @@ export function createWhatsAppManager({
               item.registered ||
               state.creds.registered === true
 
+            await flushItemCreds(item)
+
             await sessions.updateOne(
               { sessionId },
               {
@@ -505,8 +579,7 @@ export function createWhatsAppManager({
             qrCache.delete(sessionId)
             clearPairing(sessionId)
 
-            // Never create an automatic reconnect loop for an
-            // unlinked visitor session.
+            // Only linked accounts are automatically reconnected.
             if (
               !shuttingDown &&
               wasRegistered &&
@@ -653,6 +726,11 @@ export function createWhatsAppManager({
       }
     }
 
+    if (item && !item.closed && transportIsClosed(item)) {
+      await retireStaleSocket(sessionId, item)
+      item = null
+    }
+
     let cached = qrCache.get(sessionId)
 
     if (cached && cached.expiresAt > Date.now()) {
@@ -691,7 +769,7 @@ export function createWhatsAppManager({
     }
 
     try {
-      const result = await waitForQr(sessionId, 25000)
+      const result = await waitForQr(sessionId, 30000)
 
       if (result.connected) {
         return {
@@ -733,11 +811,15 @@ export function createWhatsAppManager({
     }
   }
 
-  async function waitForSocketOpen(item, timeout = 15000) {
+  async function waitForSocketOpen(item, timeout = 30000) {
     const startedAt = Date.now()
 
     while (Date.now() - startedAt < timeout) {
-      if (item.closed || sockets.get(item.sessionId) !== item) {
+      if (
+        item.closed ||
+        sockets.get(item.sessionId) !== item ||
+        transportIsClosed(item)
+      ) {
         throw new Error('WhatsApp connection closed. Please try again.')
       }
 
@@ -745,7 +827,6 @@ export function createWhatsAppManager({
         throw new Error('This WhatsApp session is already connected.')
       }
 
-      // ws readyState 1 means the WebSocket is open.
       if (item.sock?.ws?.readyState === 1) {
         return
       }
@@ -761,7 +842,10 @@ export function createWhatsAppManager({
   async function requestPairingCode(sessionId, phone) {
     const normalizedPhone = String(phone || '').replace(/\D/g, '')
 
-    if (normalizedPhone.length < 8 || normalizedPhone.length > 15) {
+    if (
+      normalizedPhone.length < 8 ||
+      normalizedPhone.length > 15
+    ) {
       throw new Error(
         'Enter a valid international phone number including country code.'
       )
@@ -774,6 +858,11 @@ export function createWhatsAppManager({
         ok: false,
         message: 'This WhatsApp session is already connected. Use a new session to link another number.'
       }
+    }
+
+    if (item && !item.closed && transportIsClosed(item)) {
+      await retireStaleSocket(sessionId, item)
+      item = null
     }
 
     if (!item || item.closed) {
@@ -797,13 +886,20 @@ export function createWhatsAppManager({
 
     if (!item.pairingPromise) {
       item.pairingPromise = (async () => {
-        await waitForSocketOpen(item)
+        await waitForSocketOpen(item, 30000)
 
         if (item.sock?.user) {
           throw new Error('This WhatsApp session is already connected.')
         }
 
-        const code = await item.sock.requestPairingCode(normalizedPhone)
+        // No previous message or contact with the bot is required.
+        const code = await item.sock.requestPairingCode(
+          normalizedPhone
+        )
+
+        if (!code) {
+          throw new Error('WhatsApp did not return a pairing code. Please try again.')
+        }
 
         const result = {
           code,
@@ -817,9 +913,11 @@ export function createWhatsAppManager({
           {
             $set: {
               status: 'pairing',
+              phone: normalizedPhone,
               updatedAt: new Date()
             }
-          }
+          },
+          { upsert: true }
         )
 
         await log('info', 'WhatsApp pairing code generated', {
@@ -840,7 +938,7 @@ export function createWhatsAppManager({
       code,
       message: 'Pairing code ready',
       expiresIn: result
-        ? Math.ceil((result.expiresAt - Date.now()) / 1000)
+        ? Math.max(1, Math.ceil((result.expiresAt - Date.now()) / 1000))
         : 60
     }
   }
@@ -962,14 +1060,20 @@ export function createWhatsAppManager({
 
     reconnectTimers.clear()
 
-    for (const [sessionId, item] of sockets) {
+    const items = [...sockets.entries()]
+
+    for (const [sessionId, item] of items) {
       item.closed = true
 
       try {
         item.sock.end(undefined)
       } catch {}
 
-      sockets.delete(sessionId)
+      await flushItemCreds(item)
+
+      if (sockets.get(sessionId) === item) {
+        sockets.delete(sessionId)
+      }
     }
 
     for (const sessionId of qrWaiters.keys()) {
