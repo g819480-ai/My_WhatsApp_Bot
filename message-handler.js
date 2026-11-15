@@ -47,23 +47,45 @@ export function createMessageHandler({
       messageTypes: Object.keys(message?.message || {})
     });
 
-    if (!jid || jid === "status@broadcast") return;
+    // Allow commands sent from the connected account to its own chat.
+if (key?.fromMe) {
+  const normalizeJid = value =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/:\d+(?=@)/, "");
 
-    // Allow messages sent from this account to its own chat.
-    if (key?.fromMe) {
-      const ownId = sock.user?.id
-        ? sock.user.id.split(":")[0].split("@")[0]
-        : null;
+  const ownJids = [
+    sock.user?.id,
+    sock.user?.lid
+  ]
+    .filter(Boolean)
+    .map(normalizeJid);
 
-      const ownJid = ownId
-        ? ownId + "@s.whatsapp.net"
-        : null;
+  const remoteJids = [
+    key.remoteJid,
+    key.remoteJidAlt
+  ]
+    .filter(Boolean)
+    .map(normalizeJid);
 
-      const ownLid = sock.user?.lid || null;
+  const isOwnChat = remoteJids.some(remote =>
+    ownJids.includes(remote)
+  );
 
-      if (jid !== ownJid && jid !== ownLid) return;
-    }
+  if (!isOwnChat) {
+    await log("info", "SELF-CHAT MESSAGE FILTERED", {
+      sessionId,
+      remoteJid: key.remoteJid || null,
+      remoteJidAlt: key.remoteJidAlt || null,
+      ownId: sock.user?.id || null,
+      ownLid: sock.user?.lid || null
+    });
 
+    return;
+  }
+}
+  
     const text = extractText(message?.message).trim();
 
     await log("info", "MESSAGE HANDLER EXTRACTED TEXT", {
