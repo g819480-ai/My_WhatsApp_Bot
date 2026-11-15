@@ -320,12 +320,18 @@ async function updateSettings(sessionId, patch) {
     const startPromise = (async () => {
       await getSettings(sessionId)
 
-      const auth = await useMongoAuthState({
-        sessions,
-        sessionKeys,
-        sessionId,
-        logger
-      })
+      const savedSession = await sessions.findOne(
+  { sessionId },
+  { projection: { status: 1 } }
+)
+
+const auth = await useMongoAuthState({
+  sessions,
+  sessionKeys,
+  sessionId,
+  logger,
+  freshAuth: savedSession?.status === 'logged_out'
+})
 
       const {
         state,
