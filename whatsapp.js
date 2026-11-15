@@ -905,7 +905,7 @@ const auth = await useMongoAuthState({
       item.pairingPromise = (async () => {
         await waitForSocketOpen(item, 30000)
 
-        if (item.sock?.user) {
+        if (item.connectedAt && !item.closed) {
           throw new Error('This WhatsApp session is already connected.')
         }
 
