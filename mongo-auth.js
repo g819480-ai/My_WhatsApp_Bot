@@ -25,16 +25,19 @@ export async function useMongoAuthState({
     try {
       creds = decode(session.creds)
     } catch (err) {
-      logger?.warn?.(
+      logger?.error?.(
         { err, sessionId },
-        'Stored credentials could not be decoded; creating fresh credentials'
+        'Saved WhatsApp credentials could not be decoded'
       )
-
-      creds = initAuthCreds()
+      throw new Error(
+        'Saved WhatsApp credentials are unreadable. Existing session data was preserved.'
+      )
     }
   } else {
     creds = initAuthCreds()
   }
+
+  let saveQueue = Promise.resolve()
 
   const keys = {
     get: async (type, ids) => {
@@ -55,15 +58,16 @@ export async function useMongoAuthState({
       for (const id of ids) {
         const value = values.get(id)
 
-        if (value !== undefined && value !== null) {
-          try {
-            result[id] = decode(value)
-          } catch (err) {
-            logger?.warn?.(
-              { err, sessionId, category: type, keyId: id },
-              'Could not decode stored WhatsApp session key'
-            )
-          }
+        if (value === undefined || value === null) continue
+
+        try {
+          result[id] = decode(value)
+        } catch (err) {
+          logger?.error?.(
+            { err, sessionId, category: type, keyId: id },
+            'Saved WhatsApp session key could not be decoded'
+          )
+          throw err
         }
       }
 
@@ -82,21 +86,13 @@ export async function useMongoAuthState({
           if (value === null || value === undefined) {
             operations.push({
               deleteOne: {
-                filter: {
-                  sessionId,
-                  category,
-                  keyId
-                }
+                filter: { sessionId, category, keyId }
               }
             })
           } else {
             operations.push({
               updateOne: {
-                filter: {
-                  sessionId,
-                  category,
-                  keyId
-                },
+                filter: { sessionId, category, keyId },
                 update: {
                   $set: {
                     sessionId,
@@ -122,27 +118,37 @@ export async function useMongoAuthState({
     }
   }
 
-  const saveCreds = async () => {
-    // Only a registered WhatsApp account is a restorable session.
-    // Freshly initialized credentials must not be treated as linked.
+  const saveCreds = () => {
+    const snapshot = encode(creds)
     const registered = creds.registered === true
 
-    await sessions.updateOne(
-      { sessionId },
-      {
-        $set: {
-          sessionId,
-          creds: encode(creds),
-          hasCreds: registered,
-          updatedAt: new Date()
+    saveQueue = saveQueue.catch(() => {}).then(async () => {
+      await sessions.updateOne(
+        { sessionId },
+        {
+          $set: {
+            sessionId,
+            creds: snapshot,
+            hasCreds: registered,
+            updatedAt: new Date()
+          },
+          $setOnInsert: {
+            createdAt: new Date()
+          }
         },
-        $setOnInsert: {
-          createdAt: new Date()
-        }
-      },
-      { upsert: true }
-    )
+        { upsert: true }
+      )
+
+      logger?.info?.(
+        { sessionId, registered },
+        'WhatsApp credentials saved to MongoDB'
+      )
+    })
+
+    return saveQueue
   }
+
+  const flushCreds = () => saveQueue
 
   const state = {
     creds,
@@ -151,6 +157,7 @@ export async function useMongoAuthState({
 
   return {
     state,
-    saveCreds
+    saveCreds,
+    flushCreds
   }
 }
