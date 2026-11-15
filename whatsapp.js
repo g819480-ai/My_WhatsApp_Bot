@@ -837,9 +837,12 @@ const auth = await useMongoAuthState({
         throw new Error('WhatsApp connection closed. Please try again.')
       }
 
-      if (item.sock?.user) {
-        throw new Error('This WhatsApp session is already connected.')
-      }
+      if (item?.connectedAt && !item.closed) {
+  return {
+    ok: false,
+    message: 'This WhatsApp session is already connected. Use a new session to link another number.'
+  }
+}
 
       if (item.sock?.ws?.readyState === 1) {
         return
