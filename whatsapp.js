@@ -870,7 +870,7 @@ const auth = await useMongoAuthState({
 
     let item = sockets.get(sessionId)
 
-    if (item?.sock?.user) {
+    if (item?.connectedAt && !item.closed) {
       return {
         ok: false,
         message: 'This WhatsApp session is already connected. Use a new session to link another number.'
