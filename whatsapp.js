@@ -13,10 +13,10 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 const DEFAULT_SETTINGS = {
   alwaysOnline: true,
   autoViewStatus: true,
-  statusReact: true,
+  statusReact: false,
   welcome: true,
   goodbye: false,
-  autoReact: true,
+  autoReact: false,
   statusReactEmoji: '❤️'
 }
 
@@ -177,28 +177,36 @@ export function createWhatsAppManager({
     return value
   }
 
-  async function updateSettings(sessionId, patch) {
-    const current = await getSettings(sessionId)
+  
+async function updateSettings(sessionId, patch) {
+  const current = await getSettings(sessionId)
 
-    const next = {
-      ...current,
-      ...patch,
-      updatedAt: new Date()
-    }
-
-    await settings.updateOne(
-      { sessionId },
-      {
-        $set: next,
-        $setOnInsert: { sessionId }
-      },
-      { upsert: true }
-    )
-
-    settingsCache.set(sessionId, next)
-
-    return next
+  const next = {
+    ...current,
+    ...patch,
+    updatedAt: new Date()
   }
+
+  const fields = { ...next }
+  delete fields.sessionId
+  delete fields.createdAt
+
+  await settings.updateOne(
+    { sessionId },
+    {
+      $set: fields,
+      $setOnInsert: {
+        sessionId,
+        createdAt: new Date()
+      }
+    },
+    { upsert: true }
+  )
+
+  settingsCache.set(sessionId, next)
+
+  return next
+}
 
   async function sendText(sock, jid, text) {
     if (typeof text !== 'string' || !text.trim()) {
